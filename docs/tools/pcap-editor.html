@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PCAP Editor Guide - DevToolBox</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      background: #f5f5f5;
+    }
+
+    header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 1.5rem;
+    }
+
+    header a {
+      color: white;
+      text-decoration: none;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+
+    h1 {
+      color: #667eea;
+      margin: 2rem 0 1rem;
+    }
+
+    h2 {
+      color: #667eea;
+      margin: 1.5rem 0 1rem;
+      border-bottom: 2px solid #667eea;
+      padding-bottom: 0.5rem;
+    }
+
+    h3 {
+      color: #764ba2;
+      margin: 1rem 0 0.5rem;
+    }
+
+    article {
+      background: white;
+      padding: 2rem;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      margin: 2rem auto;
+    }
+
+    p {
+      margin-bottom: 1rem;
+    }
+
+    ul, ol {
+      margin-left: 1.5rem;
+      margin-bottom: 1rem;
+    }
+
+    li {
+      margin-bottom: 0.5rem;
+    }
+
+    code {
+      background: #f0f4ff;
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      font-family: 'Courier New', monospace;
+      color: #667eea;
+    }
+
+    pre {
+      background: #2d2d2d;
+      color: #f8f8f2;
+      padding: 1rem;
+      border-radius: 8px;
+      overflow-x: auto;
+      margin: 1rem 0;
+      font-family: 'Courier New', monospace;
+    }
+
+    .feature-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 1.5rem;
+      margin: 1.5rem 0;
+    }
+
+    .feature-box {
+      padding: 1.5rem;
+      background: #f8f9ff;
+      border-left: 4px solid #667eea;
+      border-radius: 6px;
+    }
+
+    .feature-box h4 {
+      color: #667eea;
+      margin-bottom: 0.5rem;
+    }
+
+    .back-button {
+      display: inline-block;
+      padding: 0.75rem 1.5rem;
+      background: #667eea;
+      color: white;
+      text-decoration: none;
+      border-radius: 6px;
+      margin-bottom: 1rem;
+      transition: all 0.3s;
+    }
+
+    .back-button:hover {
+      background: #764ba2;
+    }
+
+    footer {
+      background: #333;
+      color: white;
+      text-align: center;
+      padding: 1.5rem;
+      margin-top: 2rem;
+    }
+
+    .step {
+      background: #f8f9ff;
+      padding: 1.5rem;
+      border-radius: 8px;
+      margin-bottom: 1rem;
+    }
+
+    .step h4 {
+      color: #667eea;
+      margin-bottom: 0.5rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container">
+      <h1><a href="/">← DevToolBox</a></h1>
+    </div>
+  </header>
+
+  <article class="container">
+    <a href="/" class="back-button">← Back to Home</a>
+
+    <h1>📦 PCAP Editor Guide</h1>
+
+    <h2>Overview</h2>
+    <p>
+      The PCAP Editor is a powerful tool for creating, reading, and modifying PCAP (Packet Capture) files.
+      Whether you're testing network protocols, debugging communication issues, or analyzing captured traffic,
+      the PCAP Editor provides an intuitive interface to work with network packet data.
+    </p>
+
+    <h2>Features</h2>
+    <div class="feature-list">
+      <div class="feature-box">
+        <h4>📤 Upload & Analyze</h4>
+        <p>Load PCAP/PCAPNG files and instantly view all captured packets with detailed information.</p>
+      </div>
+      <div class="feature-box">
+        <h4>🔍 Detailed Inspection</h4>
+        <p>Examine packet headers, protocols, IP addresses, ports, and full payload in hexadecimal format.</p>
+      </div>
+      <div class="feature-box">
+        <h4>✏️ Payload Editing</h4>
+        <p>Modify packet payloads at specific offsets and automatically recalculate checksums.</p>
+      </div>
+      <div class="feature-box">
+        <h4>📊 Statistics</h4>
+        <p>View comprehensive statistics about protocols used, IP addresses, ports, and file sizes.</p>
+      </div>
+      <div class="feature-box">
+        <h4>💾 Export & Download</h4>
+        <p>Save modified PCAP files and download them for use with other network tools.</p>
+      </div>
+    </div>
+
+    <h2>Getting Started</h2>
+
+    <div class="step">
+      <h4>Step 1: Upload a PCAP File</h4>
+      <p>
+        Click on the upload area or drag and drop a PCAP/PCAPNG file. The tool supports both standard
+        PCAP and PCAPNG formats.
+      </p>
+      <p>
+        <strong>File size limit:</strong> Up to 100 MB per file
+      </p>
+    </div>
+
+    <div class="step">
+      <h4>Step 2: Browse Packets</h4>
+      <p>
+        Once uploaded, you'll see a list of all packets captured in the file. Each packet shows:
+      </p>
+      <ul>
+        <li>Packet index number</li>
+        <li>Total size in bytes</li>
+        <li>Source and destination IP addresses</li>
+        <li>Protocol information (TCP, UDP, ICMP, etc.)</li>
+      </ul>
+    </div>
+
+    <div class="step">
+      <h4>Step 3: Select & Inspect Packet</h4>
+      <p>
+        Click on any packet to view its detailed information:
+      </p>
+      <ul>
+        <li>Complete packet headers</li>
+        <li>Layer information (Network, Transport, Application)</li>
+        <li>Full payload in hexadecimal format</li>
+        <li>Timestamp information</li>
+      </ul>
+    </div>
+
+    <div class="step">
+      <h4>Step 4: Modify Payload (Optional)</h4>
+      <p>
+        Click the "Edit Payload" button to modify the packet's data:
+      </p>
+      <ul>
+        <li>Enter new payload in hexadecimal format</li>
+        <li>Optionally specify an offset to modify only part of the payload</li>
+        <li>The tool automatically recalculates checksums (IP, TCP, UDP)</li>
+      </ul>
+    </div>
+
+    <div class="step">
+      <h4>Step 5: Download Modified PCAP</h4>
+      <p>
+        Click "Download Modified PCAP" to save your changes. The file will be compatible with
+        standard network analysis tools like Wireshark, tcpdump, and others.
+      </p>
+    </div>
+
+    <h2>Understanding Packet Information</h2>
+
+    <h3>IP Layer</h3>
+    <p>
+      Shows the source and destination IP addresses, protocol type (TCP, UDP, ICMP), and other
+      network layer information.
+    </p>
+
+    <h3>Transport Layer</h3>
+    <p>
+      <strong>TCP:</strong> Displays source port, destination port, flags (SYN, ACK, FIN, etc.)<br>
+      <strong>UDP:</strong> Shows source port, destination port, and checksum information
+    </p>
+
+    <h3>Payload</h3>
+    <p>
+      The raw data carried by the packet, displayed in hexadecimal format. This is what you'll
+      modify when editing payloads.
+    </p>
+
+    <h2>Use Cases</h2>
+
+    <h3>1. Protocol Testing</h3>
+    <p>
+      Create test packets with specific payload patterns to verify your protocol implementation
+      handles edge cases correctly.
+    </p>
+
+    <h3>2. Debugging Communication Issues</h3>
+    <p>
+      Analyze captured traffic to identify problems in packet structure or data transmission.
+    </p>
+
+    <h3>3. Fuzzing & Security Testing</h3>
+    <p>
+      Generate malformed packets with unusual payloads to test robustness of network applications.
+    </p>
+
+    <h3>4. Data Plane Development</h3>
+    <p>
+      Test and validate packet processing pipelines by analyzing and modifying real traffic patterns.
+    </p>
+
+    <h2>Tips & Tricks</h2>
+
+    <ul>
+      <li><strong>Hex Format:</strong> When editing payloads, use valid hexadecimal characters (0-9, A-F)</li>
+      <li><strong>Large Files:</strong> For files with many packets, the tool loads packets in pages for performance</li>
+      <li><strong>Checksum Auto-Fix:</strong> Modified packets automatically get recalculated checksums</li>
+      <li><strong>Payload Offset:</strong> Use offset to patch specific bytes without modifying the entire payload</li>
+      <li><strong>Statistics:</strong> Check the statistics panel to understand traffic patterns in your PCAP</li>
+    </ul>
+
+    <h2>Technical Details</h2>
+
+    <h3>Supported Formats</h3>
+    <ul>
+      <li>PCAP (libpcap format)</li>
+      <li>PCAPNG (PCAP Next Generation)</li>
+    </ul>
+
+    <h3>Protocols Supported</h3>
+    <ul>
+      <li>IPv4, IPv6</li>
+      <li>TCP, UDP, ICMP</li>
+      <li>Ethernet</li>
+      <li>Any protocol encapsulated in the above</li>
+    </ul>
+
+    <h3>Limitations</h3>
+    <ul>
+      <li>Maximum file size: 100 MB</li>
+      <li>Payload editing works best with packets that have Raw layer data</li>
+      <li>Some nested protocols may not be fully parseable</li>
+    </ul>
+
+    <h2>Troubleshooting</h2>
+
+    <h3>Q: File upload fails</h3>
+    <p><strong>A:</strong> Ensure the file is a valid PCAP/PCAPNG file and is under 100 MB. Try downloading and re-saving with Wireshark.</p>
+
+    <h3>Q: Payload modifications don't work</h3>
+    <p><strong>A:</strong> Ensure the hex string is valid (even number of characters, 0-9 and A-F only).</p>
+
+    <h3>Q: Can't download modified PCAP</h3>
+    <p><strong>A:</strong> Check browser console for errors. Ensure your browser allows downloads from localhost.</p>
+
+    <h2>Next Steps</h2>
+    <p>
+      Once you've mastered the PCAP Editor, you might be interested in our other tools:
+    </p>
+    <ul>
+      <li><strong>File Merger:</strong> Combine multiple PCAP files</li>
+      <li><strong>Log Analyzer:</strong> Analyze network logs alongside PCAP files</li>
+      <li><strong>Performance Analyzer:</strong> Calculate metrics from packet data</li>
+    </ul>
+
+    <a href="/" class="back-button">← Back to Home</a>
+  </article>
+
+  <footer>
+    <p>&copy; 2025 DevToolBox. Documentation for PCAP Editor.</p>
+  </footer>
+</body>
+</html>

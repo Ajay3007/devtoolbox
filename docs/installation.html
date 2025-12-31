@@ -1,0 +1,84 @@
+# Installation Guide
+
+## Prerequisites
+- Python 3.8 or higher
+- Node.js 14+ and npm
+- Git
+
+## Backend Setup
+
+### Step 1: Create Virtual Environment
+```bash
+cd backend
+python -m venv venv
+
+# Windows
+venv\Scripts\activate
+
+# macOS/Linux
+source venv/bin/activate
+```
+
+### Step 2: Install Dependencies
+```bash
+pip install -r requirements.txt
+```
+
+### Step 3: Run the Server
+```bash
+python app.py
+```
+
+The API will be available at `http://localhost:5000`
+
+## Frontend Setup
+
+### Step 1: Install Dependencies
+```bash
+cd frontend
+npm install
+```
+
+### Step 2: Run Development Server
+```bash
+npm run dev
+```
+
+Open your browser to `http://localhost:8080`
+
+### Step 3: Build for Production
+```bash
+npm run build
+```
+
+## Docker Setup (Optional)
+
+### Build Docker Image
+```bash
+docker build -t devtoolbox .
+```
+
+### Run Docker Container
+```bash
+docker run -p 5000:5000 -p 8080:8080 devtoolbox
+```
+
+## GitHub Pages Deployment
+
+1. Push your code to GitHub
+2. Enable GitHub Pages in repository settings
+3. Set source to `/docs` folder
+4. Your site will be live at `https://yourusername.github.io/devtoolbox`
+
+## Troubleshooting
+
+### Port Already in Use
+If port 5000 or 8080 is already in use, modify the port in:
+- Backend: `app.py` line with `app.run()`
+- Frontend: `vite.config.js` server configuration
+
+### CORS Errors
+Ensure the frontend and backend are properly configured for CORS. Update `app.py` if needed.
+
+### Python Dependencies Issues
+Try: `pip install --upgrade pip` and reinstall requirements

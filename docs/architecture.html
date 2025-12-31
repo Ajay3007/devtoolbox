@@ -1,0 +1,252 @@
+# DevToolBox - Project Architecture
+
+## Overview
+DevToolBox is a hybrid web-based application designed with a clear separation between frontend and backend components.
+
+## Architecture Diagram
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      Web Browser                             │
+│  (Vue.js Frontend running on localhost:8080)                │
+└────────────────────┬────────────────────────────────────────┘
+                     │ HTTP/REST
+                     ▼
+┌─────────────────────────────────────────────────────────────┐
+│                  Python Flask API Server                     │
+│              (Running on localhost:5000)                    │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │  API Routes & Request Handlers                       │  │
+│  │  - /api/pcap/upload                                  │  │
+│  │  - /api/pcap/packets/<filepath>                      │  │
+│  │  - /api/pcap/packet/<filepath>/<index>               │  │
+│  │  - /api/pcap/statistics/<filepath>                   │  │
+│  │  ... and more                                        │  │
+│  └────────────────────┬─────────────────────────────────┘  │
+│                       │                                       │
+│  ┌────────────────────▼─────────────────────────────────┐  │
+│  │  Business Logic Handlers                             │  │
+│  │  ┌──────────────────────────────────────────────┐   │  │
+│  │  │ PCAP Handler                                 │   │  │
+│  │  │ - read_pcap()                               │   │  │
+│  │  │ - modify_packet_payload()                   │   │  │
+│  │  │ - get_statistics()                          │   │  │
+│  │  │ - create_pcap()                             │   │  │
+│  │  └──────────────────────────────────────────────┘   │  │
+│  │                                                      │  │
+│  │  [Future Handlers: Filemerger, HexViewer, etc.]   │  │
+│  └──────────────────────────────────────────────────────┘  │
+│                       │                                       │
+│  ┌────────────────────▼─────────────────────────────────┐  │
+│  │  External Libraries                                  │  │
+│  │  - Scapy (PCAP manipulation)                        │  │
+│  │  - Flask-CORS (Cross-origin requests)              │  │
+│  │  - Werkzeug (File handling)                        │  │
+│  └──────────────────────────────────────────────────────┘  │
+└──────────────────────────┬─────────────────────────────────┘
+                           │
+                           ▼
+                  ┌─────────────────┐
+                  │  File System    │
+                  │  (PCAP files,   │
+                  │   uploads)      │
+                  └─────────────────┘
+```
+
+## Directory Structure
+
+```
+devtoolbox/
+├── backend/
+│   ├── app.py                 # Main Flask application
+│   ├── pcap_handler.py       # PCAP processing logic
+│   ├── utils.py              # Utility functions
+│   └── requirements.txt       # Python dependencies
+│
+├── frontend/
+│   ├── main.js               # Vue app entry point
+│   ├── App.vue               # Root component
+│   ├── index.html            # HTML template
+│   ├── router/
+│   │   └── index.js          # Route definitions
+│   ├── views/
+│   │   ├── Home.vue          # Landing page
+│   │   └── PCAPEditor.vue    # PCAP editor tool
+│   ├── package.json          # Node.js dependencies
+│   └── vite.config.js        # Vite configuration
+│
+├── docs/
+│   ├── index.html            # Main documentation
+│   ├── api-reference.html    # API docs
+│   ├── installation.html     # Setup guide
+│   ├── contributing.html     # Contribution guide
+│   └── tools/
+│       └── pcap-editor.html  # PCAP editor guide
+│
+├── tests/                    # Test suite
+├── shared/                   # Shared utilities
+├── README.md                 # Project readme
+├── LICENSE                   # MIT License
+├── .gitignore               # Git ignore rules
+└── Dockerfile               # Docker configuration
+```
+
+## Technology Stack
+
+### Frontend
+- **Framework:** Vue.js 3
+- **Build Tool:** Vite
+- **HTTP Client:** Axios
+- **Styling:** CSS3 with Responsive Design
+
+### Backend
+- **Framework:** Flask
+- **PCAP Processing:** Scapy
+- **CORS Support:** Flask-CORS
+- **Python Version:** 3.8+
+
+### Deployment
+- **Frontend Hosting:** GitHub Pages (static files)
+- **Backend Hosting:** Cloud platforms (AWS, Heroku, DigitalOcean, etc.)
+- **Containerization:** Docker
+
+## Component Interactions
+
+### Data Flow for PCAP Upload
+1. User selects file in frontend
+2. Frontend sends multipart/form-data to `/api/pcap/upload`
+3. Backend receives file, validates it
+4. `PCAPHandler.read_pcap()` parses the PCAP file using Scapy
+5. Packet metadata extracted and sent back to frontend
+6. Frontend displays packet list with pagination
+
+### Data Flow for Packet Modification
+1. User edits payload in modal dialog
+2. Frontend sends PUT request to `/api/pcap/packet/<filepath>/<index>`
+3. Backend loads packet from file
+4. `PCAPHandler.modify_packet_payload()` modifies the data
+5. Checksums recalculated
+6. Modified PCAP written back to disk
+7. Frontend confirms success
+
+## API Design Principles
+
+1. **RESTful:** Follows REST conventions for API design
+2. **Stateless:** Each request is independent
+3. **Consistent:** Uniform response format across all endpoints
+4. **Documented:** API reference available in docs
+5. **Extensible:** Easy to add new endpoints and handlers
+
+## Scalability Considerations
+
+### Current Limitations
+- Single instance deployment
+- In-memory file processing
+- No database
+- Max file size: 100 MB
+
+### Future Improvements
+- Distributed backend with load balancing
+- Database for metadata storage
+- Caching layer (Redis)
+- Queue system for large file processing (Celery)
+- WebSocket for real-time updates
+
+## Security Considerations
+
+1. **File Upload Validation**
+   - File type checking (extension and magic bytes)
+   - File size limits
+   - Secure filename handling
+
+2. **Path Traversal Prevention**
+   - Using `secure_filename()` from Werkzeug
+   - Validating file paths
+
+3. **CORS Configuration**
+   - Controlled cross-origin access
+   - Can be restricted to specific domains
+
+4. **Future Enhancements**
+   - Authentication/Authorization
+   - Rate limiting
+   - HTTPS only
+   - Input validation and sanitization
+
+## Extension Points
+
+### Adding a New Tool
+
+1. **Backend:**
+   - Create new handler file (e.g., `file_merger_handler.py`)
+   - Add endpoints to `app.py`
+   - Update `requirements.txt` if needed
+
+2. **Frontend:**
+   - Create new Vue component in `views/`
+   - Add route in `router/index.js`
+   - Add navigation link in `App.vue`
+
+3. **Documentation:**
+   - Add documentation page in `docs/tools/`
+   - Update main index.html
+
+## Performance Optimization
+
+1. **Frontend**
+   - Code splitting with Vue Router
+   - Lazy loading components
+   - Minification during build
+
+2. **Backend**
+   - Pagination for large packet lists
+   - Efficient PCAP parsing with Scapy
+   - File streaming for downloads
+
+3. **Network**
+   - API response compression
+   - Minimal payload sizes
+   - Proxy setup for production
+
+## Development Workflow
+
+1. Clone repository
+2. Set up backend virtual environment
+3. Install backend dependencies
+4. Run backend server
+5. In separate terminal, set up frontend
+6. Install frontend dependencies
+7. Run frontend dev server
+8. Open browser to localhost:8080
+9. Make changes and test
+
+## Deployment Architecture
+
+```
+┌─────────────────────────────────────────┐
+│        GitHub Pages (Static)             │
+│   docs/ folder → Documentation Site      │
+│   frontend/dist → Web App (optional)     │
+└────────────────────┬────────────────────┘
+                     │
+                     │ HTTPS
+                     ▼
+┌─────────────────────────────────────────┐
+│   Cloud Provider (AWS/Heroku/DO)        │
+│   ├── Flask Backend (Port 5000)         │
+│   ├── File Storage (/uploads)           │
+│   └── Environment Config                │
+└─────────────────────────────────────────┘
+```
+
+## Future Enhancements
+
+- [ ] User authentication
+- [ ] Project/session management
+- [ ] Advanced filtering and search
+- [ ] Real-time collaboration
+- [ ] Plugin system for custom tools
+- [ ] WebSocket support for live updates
+- [ ] Mobile application
+- [ ] Batch processing
+- [ ] Integration with Wireshark

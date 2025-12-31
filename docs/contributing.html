@@ -1,0 +1,90 @@
+# Contributing Guidelines
+
+## How to Contribute
+
+We welcome contributions from the community! Here's how to get started:
+
+### 1. Fork the Repository
+Click the "Fork" button on GitHub to create your own copy.
+
+### 2. Clone Your Fork
+```bash
+git clone https://github.com/yourusername/devtoolbox.git
+cd devtoolbox
+```
+
+### 3. Create a Feature Branch
+```bash
+git checkout -b feature/your-feature-name
+```
+
+### 4. Make Your Changes
+- Follow the existing code style
+- Add tests for new features
+- Update documentation as needed
+
+### 5. Commit Your Changes
+```bash
+git commit -am 'Add your feature description'
+```
+
+### 6. Push to Your Fork
+```bash
+git push origin feature/your-feature-name
+```
+
+### 7. Submit a Pull Request
+Open a PR with a clear description of your changes.
+
+## Code Standards
+
+- **Python:** Follow PEP 8
+- **JavaScript/Vue:** Use ESLint configuration
+- **Documentation:** Use Markdown with clear examples
+
+## Adding a New Tool
+
+### Backend Structure
+```
+backend/
+├── app.py                 # Main Flask app
+├── [tool_name]_handler.py # Tool-specific logic
+└── requirements.txt       # Update with new dependencies
+```
+
+### Frontend Structure
+```
+frontend/
+└── views/[ToolName].vue   # Vue component for tool
+```
+
+### Steps to Add a Tool
+1. Create handler module in backend
+2. Add endpoints to `app.py`
+3. Create Vue component in frontend
+4. Add route in `frontend/router/index.js`
+5. Update documentation in `docs/`
+
+## Testing
+
+Run tests before submitting PR:
+```bash
+cd backend
+python -m pytest tests/
+```
+
+## Issue Reporting
+
+Found a bug? Open an issue with:
+- Clear description
+- Steps to reproduce
+- Expected vs actual behavior
+- Your environment details
+
+## Questions?
+
+Ask in GitHub Issues or Discussions. We're here to help!
+
+## License
+
+By contributing, you agree your code will be under the MIT License.

@@ -1,0 +1,23 @@
+{
+  "name": "devtoolbox-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "serve": "vue-cli-service serve",
+    "build": "vue-cli-service build",
+    "lint": "vue-cli-service lint",
+    "dev": "vite",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "vue": "^3.3.4",
+    "axios": "^1.4.0",
+    "vue-router": "^4.2.2"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^4.2.3",
+    "vite": "^4.3.9",
+    "sass": "^1.63.6",
+    "sass-loader": "^13.2.2"
+  }
+}

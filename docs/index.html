@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="DevToolBox - Powerful development tools for data plane developers and software engineers">
+  <meta name="keywords" content="PCAP, network tools, data plane, developer tools">
+  <title>DevToolBox - Development Helper Tools</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      background: #f5f5f5;
+    }
+
+    header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 2rem;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+
+    header .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    header h1 {
+      font-size: 2rem;
+    }
+
+    nav a {
+      color: white;
+      text-decoration: none;
+      margin-left: 2rem;
+      font-weight: 500;
+      transition: opacity 0.3s;
+    }
+
+    nav a:hover {
+      opacity: 0.8;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+
+    .hero {
+      background: white;
+      padding: 4rem 2rem;
+      text-align: center;
+      border-radius: 12px;
+      margin: 2rem auto;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      max-width: 900px;
+    }
+
+    .hero h2 {
+      font-size: 2.5rem;
+      color: #667eea;
+      margin-bottom: 1rem;
+    }
+
+    .hero p {
+      font-size: 1.2rem;
+      color: #666;
+      margin-bottom: 2rem;
+    }
+
+    .cta-buttons {
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      padding: 0.75rem 2rem;
+      border-radius: 8px;
+      text-decoration: none;
+      font-weight: 600;
+      transition: all 0.3s;
+      border: none;
+      cursor: pointer;
+      font-size: 1rem;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 16px rgba(102, 126, 234, 0.4);
+    }
+
+    .btn-secondary {
+      background: white;
+      color: #667eea;
+      border: 2px solid #667eea;
+    }
+
+    .btn-secondary:hover {
+      background: #f8f9ff;
+    }
+
+    .tools-section {
+      margin: 4rem auto;
+    }
+
+    .tools-section h2 {
+      font-size: 2rem;
+      text-align: center;
+      margin-bottom: 3rem;
+      color: #333;
+    }
+
+    .tools-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 2rem;
+    }
+
+    .tool-card {
+      background: white;
+      padding: 2rem;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      transition: all 0.3s;
+    }
+
+    .tool-card:hover {
+      transform: translateY(-8px);
+      box-shadow: 0 12px 24px rgba(0, 0, 0, 0.15);
+    }
+
+    .tool-card .icon {
+      font-size: 3rem;
+      margin-bottom: 1rem;
+    }
+
+    .tool-card h3 {
+      color: #667eea;
+      margin-bottom: 1rem;
+      font-size: 1.5rem;
+    }
+
+    .tool-card p {
+      color: #666;
+      margin-bottom: 1.5rem;
+      line-height: 1.6;
+    }
+
+    .tool-card a {
+      color: #667eea;
+      text-decoration: none;
+      font-weight: 600;
+      transition: all 0.3s;
+    }
+
+    .tool-card a:hover {
+      color: #764ba2;
+    }
+
+    .docs-section {
+      margin: 4rem auto;
+      background: white;
+      padding: 2rem;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+
+    .docs-section h2 {
+      font-size: 2rem;
+      color: #333;
+      margin-bottom: 2rem;
+    }
+
+    .docs-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 1.5rem;
+    }
+
+    .doc-item {
+      padding: 1.5rem;
+      border-left: 4px solid #667eea;
+      background: #f8f9ff;
+      border-radius: 6px;
+      transition: all 0.3s;
+    }
+
+    .doc-item:hover {
+      background: #ede9f6;
+    }
+
+    .doc-item h4 {
+      color: #667eea;
+      margin-bottom: 0.5rem;
+    }
+
+    .doc-item p {
+      color: #666;
+      font-size: 0.95rem;
+    }
+
+    .doc-item a {
+      color: #667eea;
+      text-decoration: none;
+      font-weight: 600;
+      margin-top: 0.5rem;
+      display: inline-block;
+    }
+
+    .features-section {
+      margin: 4rem auto;
+      background: white;
+      padding: 2rem;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+
+    .features-section h2 {
+      font-size: 2rem;
+      color: #333;
+      margin-bottom: 2rem;
+      text-align: center;
+    }
+
+    .features-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 1.5rem;
+      list-style: none;
+    }
+
+    .features-list li {
+      padding: 1rem;
+      background: #f8f9fa;
+      border-radius: 8px;
+      line-height: 1.6;
+    }
+
+    footer {
+      background: #333;
+      color: white;
+      text-align: center;
+      padding: 2rem;
+      margin-top: 4rem;
+    }
+
+    .getting-started {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 3rem 2rem;
+      border-radius: 12px;
+      margin: 2rem auto;
+      max-width: 900px;
+    }
+
+    .getting-started h3 {
+      font-size: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .getting-started ol {
+      margin-left: 1.5rem;
+      line-height: 2;
+    }
+
+    .getting-started code {
+      background: rgba(255, 255, 255, 0.1);
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      font-family: 'Courier New', monospace;
+    }
+
+    @media (max-width: 768px) {
+      header .container {
+        flex-direction: column;
+        text-align: center;
+      }
+
+      nav a {
+        margin-left: 1rem;
+        margin-right: 1rem;
+      }
+
+      .hero h2 {
+        font-size: 1.5rem;
+      }
+
+      .cta-buttons {
+        flex-direction: column;
+      }
+
+      .btn {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container">
+      <h1>🛠️ DevToolBox</h1>
+      <nav>
+        <a href="#home">Home</a>
+        <a href="#tools">Tools</a>
+        <a href="#docs">Documentation</a>
+        <a href="https://github.com/yourusername/devtoolbox" target="_blank">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="hero">
+    <h2>Developer Helper Tools</h2>
+    <p>Powerful utilities for data plane developers and software engineers. Analyze packets, merge files, and more.</p>
+    <div class="cta-buttons">
+      <a href="http://localhost:8080" class="btn btn-primary">Launch Web App</a>
+      <a href="#docs" class="btn btn-secondary">View Documentation</a>
+    </div>
+  </div>
+
+  <section class="tools-section container" id="tools">
+    <h2>Available Tools</h2>
+    <div class="tools-grid">
+      <div class="tool-card">
+        <div class="icon">📦</div>
+        <h3>PCAP Editor</h3>
+        <p>Create, read, and modify PCAP dumps with advanced payload editing. Perfect for testing and debugging network protocols.</p>
+        <a href="#pcap-editor-docs">Learn More →</a>
+      </div>
+
+      <div class="tool-card">
+        <div class="icon">🔀</div>
+        <h3>File Merger</h3>
+        <p>Intelligently merge multiple files based on various parameters like timestamp, sequence number, or custom rules.</p>
+        <a href="#file-merger-docs">Coming Soon</a>
+      </div>
+
+      <div class="tool-card">
+        <div class="icon">🔍</div>
+        <h3>Hex Viewer</h3>
+        <p>Advanced binary file inspection and editing with support for various encoding formats.</p>
+        <a href="#">Coming Soon</a>
+      </div>
+
+      <div class="tool-card">
+        <div class="icon">📊</div>
+        <h3>Log Analyzer</h3>
+        <p>Parse, filter, and visualize logs to identify patterns, performance issues, and anomalies.</p>
+        <a href="#">Coming Soon</a>
+      </div>
+
+      <div class="tool-card">
+        <div class="icon">📝</div>
+        <h3>Config Generator</h3>
+        <p>Generate configuration files for DPDK, testpmd, and other networking tools with ease.</p>
+        <a href="#">Coming Soon</a>
+      </div>
+
+      <div class="tool-card">
+        <div class="icon">⚡</div>
+        <h3>Performance Analyzer</h3>
+        <p>Calculate throughput, latency, jitter and other metrics from PCAP and log files.</p>
+        <a href="#">Coming Soon</a>
+      </div>
+    </div>
+  </section>
+
+  <div class="getting-started container">
+    <h3>🚀 Getting Started</h3>
+    <ol>
+      <li>Clone the repository: <code>git clone https://github.com/yourusername/devtoolbox.git</code></li>
+      <li>Install backend dependencies: <code>cd backend && pip install -r requirements.txt</code></li>
+      <li>Start the backend: <code>python app.py</code></li>
+      <li>Install frontend dependencies: <code>cd frontend && npm install</code></li>
+      <li>Start the frontend: <code>npm run dev</code></li>
+      <li>Open <code>http://localhost:8080</code> in your browser</li>
+    </ol>
+  </div>
+
+  <section class="docs-section container" id="docs">
+    <h2>📚 Documentation</h2>
+    <div class="docs-grid">
+      <div class="doc-item" id="pcap-editor-docs">
+        <h4>PCAP Editor Guide</h4>
+        <p>Complete guide for using the PCAP editor including uploading, viewing, and modifying packets.</p>
+        <a href="tools/pcap-editor.html">Read Guide →</a>
+      </div>
+
+      <div class="doc-item">
+        <h4>API Reference</h4>
+        <p>Detailed API documentation for backend endpoints and integration with external tools.</p>
+        <a href="api-reference.html">View API Docs →</a>
+      </div>
+
+      <div class="doc-item">
+        <h4>Installation Guide</h4>
+        <p>Step-by-step instructions for setting up DevToolBox on your machine.</p>
+        <a href="installation.html">Setup Instructions →</a>
+      </div>
+
+      <div class="doc-item">
+        <h4>Contributing</h4>
+        <p>Learn how to contribute to the project and add your own tools.</p>
+        <a href="contributing.html">Contribute →</a>
+      </div>
+
+      <div class="doc-item">
+        <h4>FAQ</h4>
+        <p>Frequently asked questions and troubleshooting tips.</p>
+        <a href="faq.html">View FAQ →</a>
+      </div>
+
+      <div class="doc-item">
+        <h4>Architecture</h4>
+        <p>Overview of the project architecture and design decisions.</p>
+        <a href="architecture.html">Learn Architecture →</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="features-section container">
+    <h2>✨ Key Features</h2>
+    <ul class="features-list">
+      <li>🌐 Web-based interface - No installation required for front-end usage</li>
+      <li>⚙️ Powerful backend API - For complex operations and automation</li>
+      <li>📦 PCAP/PCAPNG support - Multiple packet capture formats</li>
+      <li>✏️ Payload modification - Edit packet contents with ease</li>
+      <li>📊 Detailed statistics - Get insights about your network data</li>
+      <li>🔄 Import/Export - Multiple format support</li>
+      <li>🔒 Secure - Works locally, data stays on your machine</li>
+      <li>🚀 Fast - Optimized for performance</li>
+    </ul>
+  </section>
+
+  <footer>
+    <p>&copy; 2025 DevToolBox. Designed for data plane developers.</p>
+    <p><a href="https://github.com/yourusername/devtoolbox" style="color: #667eea; text-decoration: none;">View on GitHub</a></p>
+  </footer>
+</body>
+</html>

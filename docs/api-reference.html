@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>API Reference - DevToolBox</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      background: #f5f5f5;
+    }
+
+    header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 1.5rem;
+    }
+
+    header a {
+      color: white;
+      text-decoration: none;
+    }
+
+    .container {
+      max-width: 1000px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+
+    h1 {
+      color: #667eea;
+      margin: 2rem 0 1rem;
+    }
+
+    h2 {
+      color: #667eea;
+      margin: 1.5rem 0 1rem;
+      border-bottom: 2px solid #667eea;
+      padding-bottom: 0.5rem;
+    }
+
+    h3 {
+      color: #764ba2;
+      margin: 1rem 0 0.5rem;
+    }
+
+    article {
+      background: white;
+      padding: 2rem;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      margin: 2rem auto;
+    }
+
+    .endpoint {
+      background: #f0f4ff;
+      padding: 1rem;
+      border-left: 4px solid #667eea;
+      margin: 1.5rem 0;
+      border-radius: 4px;
+    }
+
+    .method {
+      display: inline-block;
+      padding: 0.25rem 0.75rem;
+      border-radius: 4px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      margin-right: 0.5rem;
+    }
+
+    .method.get {
+      background: #28a745;
+      color: white;
+    }
+
+    .method.post {
+      background: #007bff;
+      color: white;
+    }
+
+    .method.put {
+      background: #ffc107;
+      color: #333;
+    }
+
+    .method.delete {
+      background: #dc3545;
+      color: white;
+    }
+
+    code {
+      background: #2d2d2d;
+      color: #f8f8f2;
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      font-family: 'Courier New', monospace;
+    }
+
+    pre {
+      background: #2d2d2d;
+      color: #f8f8f2;
+      padding: 1rem;
+      border-radius: 8px;
+      overflow-x: auto;
+      margin: 1rem 0;
+      font-family: 'Courier New', monospace;
+    }
+
+    .response {
+      margin: 1rem 0;
+    }
+
+    .response-title {
+      font-weight: 600;
+      color: #667eea;
+      margin-top: 1rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .back-button {
+      display: inline-block;
+      padding: 0.75rem 1.5rem;
+      background: #667eea;
+      color: white;
+      text-decoration: none;
+      border-radius: 6px;
+      margin-bottom: 1rem;
+      transition: all 0.3s;
+    }
+
+    .back-button:hover {
+      background: #764ba2;
+    }
+
+    footer {
+      background: #333;
+      color: white;
+      text-align: center;
+      padding: 1.5rem;
+      margin-top: 2rem;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1rem 0;
+    }
+
+    table th {
+      background: #f0f4ff;
+      padding: 0.75rem;
+      text-align: left;
+      border: 1px solid #ddd;
+      font-weight: 600;
+      color: #667eea;
+    }
+
+    table td {
+      padding: 0.75rem;
+      border: 1px solid #ddd;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container">
+      <h1><a href="/">← DevToolBox</a></h1>
+    </div>
+  </header>
+
+  <article class="container">
+    <a href="/" class="back-button">← Back to Home</a>
+
+    <h1>🔌 API Reference</h1>
+
+    <h2>Base URL</h2>
+    <p>All API endpoints are relative to <code>http://localhost:5000/api</code></p>
+
+    <h2>Response Format</h2>
+    <p>All endpoints return JSON with the following structure:</p>
+    <pre>{
+  "success": boolean,
+  "status_code": number,
+  "data": {
+    // Response data
+  }
+}</pre>
+
+    <h2>Endpoints</h2>
+
+    <h3>Health Check</h3>
+    <div class="endpoint">
+      <span class="method get">GET</span>
+      <code>/health</code>
+      <p>Check API server status</p>
+      <div class="response">
+        <p class="response-title">Example Response:</p>
+        <pre>{
+  "success": true,
+  "status_code": 200,
+  "data": {
+    "status": "healthy",
+    "service": "PCAP Editor API",
+    "timestamp": "2025-12-29T10:30:00.000000"
+  }
+}</pre>
+      </div>
+    </div>
+
+    <h3>Upload PCAP File</h3>
+    <div class="endpoint">
+      <span class="method post">POST</span>
+      <code>/pcap/upload</code>
+      <p>Upload and parse a PCAP file</p>
+
+      <h4>Request</h4>
+      <p><strong>Content-Type:</strong> multipart/form-data</p>
+      <p><strong>Parameters:</strong></p>
+      <table>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+        <tr>
+          <td>file</td>
+          <td>File</td>
+          <td>PCAP or PCAPNG file (max 100MB)</td>
+        </tr>
+      </table>
+
+      <div class="response">
+        <p class="response-title">Example Response:</p>
+        <pre>{
+  "success": true,
+  "status_code": 200,
+  "data": {
+    "filepath": "uploads/20251229_103000_capture.pcap",
+    "filename": "capture.pcap",
+    "packet_count": 1250,
+    "packets": [...]  // First 100 packets
+  }
+}</pre>
+      </div>
+    </div>
+
+    <h3>Get Packets List</h3>
+    <div class="endpoint">
+      <span class="method get">GET</span>
+      <code>/pcap/packets/&lt;filepath&gt;</code>
+      <p>Get paginated list of packets</p>
+
+      <h4>Query Parameters</h4>
+      <table>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Default</th>
+          <th>Description</th>
+        </tr>
+        <tr>
+          <td>offset</td>
+          <td>integer</td>
+          <td>0</td>
+          <td>Starting packet index</td>
+        </tr>
+        <tr>
+          <td>limit</td>
+          <td>integer</td>
+          <td>100</td>
+          <td>Number of packets to return</td>
+        </tr>
+      </table>
+
+      <h4>Example</h4>
+      <code>GET /pcap/packets/uploads/20251229_103000_capture.pcap?offset=0&limit=50</code>
+
+      <div class="response">
+        <p class="response-title">Example Response:</p>
+        <pre>{
+  "success": true,
+  "status_code": 200,
+  "data": {
+    "total": 1250,
+    "offset": 0,
+    "limit": 100,
+    "packets": [...]
+  }
+}</pre>
+      </div>
+    </div>
+
+    <h3>Get Packet Details</h3>
+    <div class="endpoint">
+      <span class="method get">GET</span>
+      <code>/pcap/packet/&lt;filepath&gt;/&lt;packet_index&gt;</code>
+      <p>Get detailed information about a specific packet</p>
+
+      <h4>Path Parameters</h4>
+      <table>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+        <tr>
+          <td>filepath</td>
+          <td>string</td>
+          <td>Path to PCAP file (URL encoded)</td>
+        </tr>
+        <tr>
+          <td>packet_index</td>
+          <td>integer</td>
+          <td>Zero-based packet index</td>
+        </tr>
+      </table>
+
+      <h4>Example</h4>
+      <code>GET /pcap/packet/uploads/20251229_103000_capture.pcap/5</code>
+
+      <div class="response">
+        <p class="response-title">Example Response:</p>
+        <pre>{
+  "success": true,
+  "status_code": 200,
+  "data": {
+    "index": 5,
+    "timestamp": 1609459800.123456,
+    "length": 64,
+    "layers": "Ether / IP / TCP",
+    "src_ip": "192.168.1.100",
+    "dst_ip": "10.0.0.1",
+    "src_port": 50123,
+    "dst_port": 443,
+    "flags": "S",
+    "payload": "48656c6c6f...",
+    "payload_size": 20
+  }
+}</pre>
+      </div>
+    </div>
+
+    <h3>Modify Packet Payload</h3>
+    <div class="endpoint">
+      <span class="method put">PUT</span>
+      <code>/pcap/packet/&lt;filepath&gt;/&lt;packet_index&gt;</code>
+      <p>Modify the payload of a specific packet</p>
+
+      <h4>Request Body</h4>
+      <pre>{
+  "payload": "48656c6c6f20576f726c64",  // Required: hex-encoded payload
+  "offset": 0                            // Optional: byte offset (default: 0)
+}</pre>
+
+      <h4>Example</h4>
+      <code>PUT /pcap/packet/uploads/20251229_103000_capture.pcap/5</code>
+
+      <div class="response">
+        <p class="response-title">Example Response:</p>
+        <pre>{
+  "success": true,
+  "status_code": 200,
+  "data": {
+    "message": "Packet modified successfully"
+  }
+}</pre>
+      </div>
+    </div>
+
+    <h3>Get File Statistics</h3>
+    <div class="endpoint">
+      <span class="method get">GET</span>
+      <code>/pcap/statistics/&lt;filepath&gt;</code>
+      <p>Get statistics about the PCAP file</p>
+
+      <div class="response">
+        <p class="response-title">Example Response:</p>
+        <pre>{
+  "success": true,
+  "status_code": 200,
+  "data": {
+    "total_packets": 1250,
+    "protocols": {
+      "IPv4": 1200,
+      "IPv6": 50,
+      "TCP": 800,
+      "UDP": 400,
+      "ICMP": 50
+    },
+    "src_ips": {
+      "192.168.1.100": 500,
+      "192.168.1.101": 300,
+      ...
+    },
+    "dst_ips": {
+      "10.0.0.1": 400,
+      "10.0.0.2": 300,
+      ...
+    },
+    "src_ports": {
+      "50123": 150,
+      "50124": 200,
+      ...
+    },
+    "dst_ports": {
+      "443": 300,
+      "80": 250,
+      ...
+    },
+    "total_bytes": 98765
+  }
+}</pre>
+      </div>
+    </div>
+
+    <h3>Export PCAP File</h3>
+    <div class="endpoint">
+      <span class="method get">GET</span>
+      <code>/pcap/export/&lt;filepath&gt;</code>
+      <p>Download the PCAP file</p>
+
+      <h4>Response</h4>
+      <p>Binary PCAP file (mimetype: application/octet-stream)</p>
+    </div>
+
+    <h2>Error Handling</h2>
+    <p>All errors return appropriate HTTP status codes:</p>
+    <table>
+      <tr>
+        <th>Status Code</th>
+        <th>Description</th>
+      </tr>
+      <tr>
+        <td>200</td>
+        <td>Success</td>
+      </tr>
+      <tr>
+        <td>400</td>
+        <td>Bad Request - Invalid parameters or missing data</td>
+      </tr>
+      <tr>
+        <td>404</td>
+        <td>Not Found - File or packet not found</td>
+      </tr>
+      <tr>
+        <td>500</td>
+        <td>Internal Server Error</td>
+      </tr>
+    </table>
+
+    <h2>Rate Limiting</h2>
+    <p>Currently, there is no rate limiting. Future versions may implement this.</p>
+
+    <h2>Authentication</h2>
+    <p>The API is currently open with no authentication. For production use, implement appropriate security measures.</p>
+
+    <h2>Code Examples</h2>
+
+    <h3>Python</h3>
+    <pre>import requests
+
+# Upload file
+files = {'file': open('capture.pcap', 'rb')}
+response = requests.post('http://localhost:5000/api/pcap/upload', files=files)
+data = response.json()
+filepath = data['data']['filepath']
+
+# Get packet details
+packet_response = requests.get(f'http://localhost:5000/api/pcap/packet/{filepath}/0')
+packet = packet_response.json()['data']
+print(f"Source: {packet['src_ip']}:{packet['src_port']}")
+print(f"Destination: {packet['dst_ip']}:{packet['dst_port']}")</pre>
+
+    <h3>JavaScript/Node.js</h3>
+    <pre>const axios = require('axios');
+
+async function analyzePacket() {
+  try {
+    // Get packet details
+    const response = await axios.get(
+      'http://localhost:5000/api/pcap/packet/uploads/capture.pcap/0'
+    );
+    
+    const packet = response.data.data;
+    console.log(`Protocol: ${packet.layers}`);
+    console.log(`Payload: ${packet.payload}`);
+  } catch (error) {
+    console.error('Error:', error.message);
+  }
+}
+
+analyzePacket();</pre>
+
+    <h2>WebSocket Support</h2>
+    <p>WebSocket support is planned for future versions to enable real-time packet updates.</p>
+
+    <a href="/" class="back-button">← Back to Home</a>
+  </article>
+
+  <footer>
+    <p>&copy; 2025 DevToolBox. API Documentation.</p>
+  </footer>
+</body>
+</html>
