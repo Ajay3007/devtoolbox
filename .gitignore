@@ -49,6 +49,9 @@ _site/
 .jekyll-cache/
 .jekyll-metadata
 
+# Copilot
+.github/copilot-instructions.md
+
 # OS
 Thumbs.db
 .DS_Store
