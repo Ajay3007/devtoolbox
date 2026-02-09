@@ -2,6 +2,16 @@
 
 Complete guide for starting and managing the DevToolBox application locally.
 
+## One-Click Launcher (Windows)
+
+From the project root, start both servers and open the app in one command:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\start.ps1
+```
+
+This runs [start.ps1](start.ps1), which launches backend and frontend in separate PowerShell windows.
+
 ## Prerequisites
 
 Before running, ensure you have:
@@ -10,6 +20,21 @@ Before running, ensure you have:
 - ✅ Virtual environment created: `.venv`
 - ✅ Backend dependencies installed: `pip install -r backend/requirements.txt`
 - ✅ Frontend dependencies installed: `cd frontend && npm install`
+
+## One-Click Start (Windows)
+
+Run everything with a single script from the project root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\start.ps1
+```
+
+What it does:
+- Starts backend (Flask) in a new PowerShell window
+- Starts frontend (Vite) in a new PowerShell window using `node node_modules\vite\bin\vite.js --host`
+- Opens your browser to **http://localhost:8080** (skip with `-SkipBrowser`)
+
+Requirements: `.venv` exists with dependencies installed, and `frontend/node_modules` is present.
 
 ## Quick Start (Standard Method)
 
