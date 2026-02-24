@@ -72,7 +72,7 @@ def upload_pcap():
         
         return generate_response(
             {
-                'filepath': filepath,
+                'filepath': filepath.replace('\\', '/'),
                 'filename': filename,
                 'packet_count': len(packets),
                 'packets': packets[:100]  # Return first 100 packets for preview
@@ -267,6 +267,7 @@ def modify_http_host(filepath, packet_index):
         result = pcap_handler.modify_http_host(filepath, packet_index, data['host'])
 
         if result['success']:
+            result['modified_filepath'] = result.get('modified_filepath', '').replace('\\', '/')
             return generate_response(result, 200, True)
         else:
             return generate_response(result, 400, False)
@@ -290,6 +291,7 @@ def modify_tls_sni(filepath, packet_index):
         result = pcap_handler.modify_tls_sni(filepath, packet_index, data['sni'])
 
         if result['success']:
+            result['modified_filepath'] = result.get('modified_filepath', '').replace('\\', '/')
             return generate_response(result, 200, True)
         else:
             return generate_response(result, 400, False)
@@ -313,6 +315,7 @@ def modify_dns_query(filepath, packet_index):
         result = pcap_handler.modify_dns_query(filepath, packet_index, data['query'])
 
         if result['success']:
+            result['modified_filepath'] = result.get('modified_filepath', '').replace('\\', '/')
             return generate_response(result, 200, True)
         else:
             return generate_response(result, 400, False)
@@ -340,6 +343,7 @@ def modify_ip(filepath, packet_index):
         )
 
         if result['success']:
+            result['modified_filepath'] = result.get('modified_filepath', '').replace('\\', '/')
             return generate_response(result, 200, True)
         else:
             return generate_response(result, 400, False)
@@ -367,6 +371,7 @@ def modify_port(filepath, packet_index):
         )
 
         if result['success']:
+            result['modified_filepath'] = result.get('modified_filepath', '').replace('\\', '/')
             return generate_response(result, 200, True)
         else:
             return generate_response(result, 400, False)
@@ -394,6 +399,7 @@ def modify_mac(filepath, packet_index):
         )
 
         if result['success']:
+            result['modified_filepath'] = result.get('modified_filepath', '').replace('\\', '/')
             return generate_response(result, 200, True)
         else:
             return generate_response(result, 400, False)
@@ -417,6 +423,7 @@ def modify_vlan(filepath, packet_index):
         result = pcap_handler.modify_vlan(filepath, packet_index, data['vlan_id'])
 
         if result['success']:
+            result['modified_filepath'] = result.get('modified_filepath', '').replace('\\', '/')
             return generate_response(result, 200, True)
         else:
             return generate_response(result, 400, False)
@@ -444,6 +451,7 @@ def add_vlan(filepath, packet_index):
         )
 
         if result['success']:
+            result['modified_filepath'] = result.get('modified_filepath', '').replace('\\', '/')
             return generate_response(result, 200, True)
         else:
             return generate_response(result, 400, False)
@@ -496,7 +504,7 @@ def generate_pcap():
         if result['success']:
             return jsonify({
                 'success': True,
-                'filepath': result['filepath'],
+                'filepath': result['filepath'].replace('\\', '/'),
                 'packet_count': result['packet_count'],
                 'protocol': result['protocol'],
                 'vlan_id': result.get('vlan_id'),
@@ -551,7 +559,7 @@ def merge_pcaps():
         if result['success']:
             return jsonify({
                 'success': True,
-                'filepath': result['filepath'],
+                'filepath': result['filepath'].replace('\\', '/'),
                 'packet_count': result['packet_count'],
                 'source_files': result['source_files'],
                 'message': f"Merged {len(saved_paths)} files into {os.path.basename(result['filepath'])}"
