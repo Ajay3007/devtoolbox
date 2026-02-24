@@ -284,7 +284,7 @@ export default {
           }
         });
 
-        const response = await axios.post('http://localhost:5000/api/pcap/generate', payload);
+        const response = await this.$axios.post('/pcap/generate', payload);
 
         if (response.data.success) {
           this.generatedFile = response.data;
@@ -332,8 +332,8 @@ export default {
     async downloadFile() {
       if (this.generatedFile) {
         try {
-          const response = await axios.get(
-            `http://localhost:5000/api/pcap/export/${encodeURIComponent(this.generatedFile.filepath)}`,
+          const response = await this.$axios.get(
+            `/pcap/export/${encodeURIComponent(this.generatedFile.filepath)}`,
             { responseType: 'blob' }
           );
 

@@ -106,7 +106,7 @@ export default {
           formData.append('output_name', this.outputName);
         }
 
-        const response = await axios.post('http://localhost:5000/api/pcap/merge', formData, {
+        const response = await this.$axios.post('/pcap/merge', formData, {
           headers: { 'Content-Type': 'multipart/form-data' }
         });
 
@@ -133,8 +133,8 @@ export default {
     async downloadFile() {
       if (!this.result) return;
       try {
-        const response = await axios.get(
-          `http://localhost:5000/api/pcap/export/${encodeURIComponent(this.result.filepath)}`,
+        const response = await this.$axios.get(
+          `/pcap/export/${encodeURIComponent(this.result.filepath)}`,
           { responseType: 'blob' }
         );
 

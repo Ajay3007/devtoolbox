@@ -256,7 +256,7 @@ export default {
       this.error = null;
       
       try {
-        const response = await axios.post('http://localhost:5000/api/hex/upload', formData, {
+        const response = await this.$axios.post('/hex/upload', formData, {
           headers: { 'Content-Type': 'multipart/form-data' },
           onUploadProgress: (progressEvent) => {
             this.uploadProgress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
