@@ -8,6 +8,8 @@
         <router-link to="/pcap-generator">PCAP Generator</router-link>
         <router-link to="/pcap-merger">PCAP Merger</router-link>
         <router-link to="/hex-viewer">Hex Viewer</router-link>
+        <router-link to="/file-manager">📂 Files</router-link>
+        <router-link to="/pdf-editor">📄 PDF Editor</router-link>
       </nav>
     </header>
     <main>

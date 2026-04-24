@@ -44,6 +44,20 @@
         </div>
 
         <div class="tool-card">
+          <div class="tool-icon">📂</div>
+          <h3>File Manager</h3>
+          <p>Browse, rename, download and delete all files in the uploads folder from one place.</p>
+          <router-link to="/file-manager">Get Started →</router-link>
+        </div>
+
+        <div class="tool-card">
+          <div class="tool-icon">📄</div>
+          <h3>PDF Editor</h3>
+          <p>Click on any text in a PDF to edit it in-place while preserving font size and style.</p>
+          <router-link to="/pdf-editor">Get Started →</router-link>
+        </div>
+
+        <div class="tool-card">
           <div class="tool-icon">📊</div>
           <h3>Log Analyzer</h3>
           <p>Parse and analyze logs for patterns and insights (Coming Soon)</p>

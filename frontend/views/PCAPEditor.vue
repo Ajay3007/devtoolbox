@@ -44,9 +44,22 @@
       <section v-if="fileInfo" class="packets-section">
         <div class="section-header">
           <h2>Packets</h2>
-          <button @click="downloadPCAP" class="btn btn-download" v-if="fileInfo">
-            📥 Download {{ isModified ? 'Modified' : '' }} PCAP
-          </button>
+          <div class="section-header-actions">
+            <button @click="toggleBulkMode" class="btn btn-bulk" :class="{ active: bulkMode }">
+              {{ bulkMode ? '✅ Bulk Mode ON' : '☑️ Bulk Edit' }}
+            </button>
+            <button @click="downloadPCAP" class="btn btn-download" v-if="fileInfo">
+              📥 Download {{ isModified ? 'Modified' : '' }} PCAP
+            </button>
+          </div>
+        </div>
+
+        <!-- Select All bar (visible in bulk mode) -->
+        <div v-if="bulkMode" class="select-all-bar">
+          <label class="select-all-label">
+            <input type="checkbox" :checked="allSelected" @change="toggleSelectAll" />
+            <span>Select All ({{ selectedPackets.length }} / {{ packets.length }} selected)</span>
+          </label>
         </div>
 
         <div v-if="loading" class="loading">
@@ -58,21 +71,189 @@
             v-for="(packet, index) in packets"
             :key="index"
             class="packet-item"
-            @click="selectPacket(index)"
-            :class="{ active: selectedPacketIndex === index }"
+            :class="{ active: selectedPacketIndex === index, 'bulk-selected': selectedPackets.includes(index) }"
           >
-            <div class="packet-header">
-              <span class="packet-index">#{{ packet.index }}</span>
-              <span class="packet-length">{{ packet.length }} bytes</span>
-              <span v-if="packet.src_ip" class="packet-ips">
-                {{ packet.src_ip }} → {{ packet.dst_ip }}
-              </span>
+            <!-- Bulk checkbox -->
+            <input
+              v-if="bulkMode"
+              type="checkbox"
+              class="packet-checkbox"
+              :checked="selectedPackets.includes(index)"
+              @change="togglePacketSelection(index)"
+              @click.stop
+            />
+            <!-- Main row (click to open details) -->
+            <div class="packet-main" @click="selectPacket(index)">
+              <div class="packet-header">
+                <span class="packet-index">#{{ packet.index }}</span>
+                <span class="packet-length">{{ packet.length }} bytes</span>
+                <span v-if="packet.src_ip" class="packet-ips">
+                  {{ packet.src_ip }} → {{ packet.dst_ip }}
+                </span>
+              </div>
+              <div class="packet-summary">{{ packet.layers }}</div>
             </div>
-            <div class="packet-summary">{{ packet.layers }}</div>
+            <!-- Action buttons -->
+            <div class="packet-actions" @click.stop>
+              <button @click="doMovePacket(index, 'top')" class="pkt-btn" title="Move to Top">⬆</button>
+              <button @click="doMovePacket(index, 'up')" class="pkt-btn" title="Move Up" :disabled="index === 0">↑</button>
+              <button @click="doMovePacket(index, 'down')" class="pkt-btn" title="Move Down" :disabled="index === packets.length - 1">↓</button>
+              <button @click="doMovePacket(index, 'bottom')" class="pkt-btn" title="Move to Bottom">⬇</button>
+              <button @click="doDuplicatePacket(index)" class="pkt-btn" title="Duplicate">📋</button>
+              <button @click="askDeletePacket(index)" class="pkt-btn pkt-btn-danger" title="Delete">🗑️</button>
+            </div>
           </div>
         </div>
 
-        <div v-else class="empty-state">
+        <!-- Bulk Edit + Replicate Panel -->
+        <div v-if="bulkMode && selectedPackets.length > 0" class="bulk-panel-wrapper">
+
+          <!-- ── Replicate Section ── -->
+          <div class="bulk-sub-panel replicate-panel">
+            <div class="bulk-sub-header" @click="showReplicatePanel = !showReplicatePanel">
+              <span>🔁 Replicate Selected Packets</span>
+              <span class="chevron">{{ showReplicatePanel ? '▲' : '▼' }}</span>
+            </div>
+            <div v-if="showReplicatePanel" class="bulk-sub-body">
+              <p class="replicate-info">
+                Will create <strong>{{ replicateCount * selectedPackets.length }}</strong> copies of
+                <strong>{{ selectedPackets.length }}</strong> selected packet(s), inserted after the last selected packet.
+              </p>
+              <div class="replicate-row">
+                <label>Repeat ×</label>
+                <input v-model.number="replicateCount" type="number" min="1" max="10000"
+                       class="bulk-input replicate-count-input" />
+                <label class="toggle-label">
+                  <input type="checkbox" v-model="replicateAutoSelect" />
+                  Auto-select copies after replication
+                </label>
+              </div>
+              <div class="bulk-actions">
+                <button @click="doReplicate" class="btn btn-replicate" :disabled="replicating || replicateCount < 1">
+                  {{ replicating ? '⏳ Replicating…' : '🔁 Replicate' }}
+                </button>
+              </div>
+              <p v-if="replicateResult" class="bulk-result">{{ replicateResult }}</p>
+            </div>
+          </div>
+
+          <!-- ── Bulk Edit Section ── -->
+          <div class="bulk-sub-panel">
+            <div class="bulk-sub-header" @click="showBulkEditPanel = !showBulkEditPanel">
+              <span>✏️ Bulk Edit — {{ selectedPackets.length }} packet(s) selected</span>
+              <span class="chevron">{{ showBulkEditPanel ? '▲' : '▼' }}</span>
+            </div>
+            <div v-if="showBulkEditPanel" class="bulk-sub-body">
+
+              <!-- Incremental mode toggle -->
+              <div class="inc-toggle-bar">
+                <label class="toggle-label">
+                  <input type="checkbox" v-model="incrementalMode" />
+                  <span class="inc-badge">📈 Incremental Mode</span>
+                </label>
+                <div v-if="incrementalMode" class="step-control">
+                  <label>Step size:</label>
+                  <input v-model.number="incrementalStep" type="number" min="1" class="step-input" />
+                </div>
+              </div>
+              <p v-if="incrementalMode" class="inc-hint">
+                Checked fields will be incremented by <strong>step × position</strong> across selected packets.
+                Packet 0 gets the base value, packet 1 gets base+step, etc.
+                IPs roll over subnet boundaries automatically. Ports wrap within 1–65535.
+              </p>
+
+              <!-- Field grid -->
+              <div class="bulk-form">
+                <!-- Src MAC — no increment -->
+                <div class="bulk-row">
+                  <label>Src MAC</label>
+                  <input v-model="bulkFields.src_mac" type="text" placeholder="leave blank to skip" class="bulk-input" />
+                </div>
+                <!-- Dst MAC — no increment -->
+                <div class="bulk-row">
+                  <label>Dst MAC</label>
+                  <input v-model="bulkFields.dst_mac" type="text" placeholder="leave blank to skip" class="bulk-input" />
+                </div>
+                <!-- VLAN ID — no increment -->
+                <div class="bulk-row">
+                  <label>VLAN ID</label>
+                  <input v-model.number="bulkFields.vlan_id" type="number" placeholder="leave blank to skip" class="bulk-input" />
+                </div>
+
+                <!-- Src IP with optional increment -->
+                <div class="bulk-row inc-row">
+                  <div class="inc-row-label">
+                    <label>Src IP</label>
+                    <label v-if="incrementalMode" class="inc-check-label" title="Increment this field">
+                      <input type="checkbox" v-model="incrementalFields.src_ip" /> 📈
+                    </label>
+                  </div>
+                  <input v-model="bulkFields.src_ip" type="text"
+                         :placeholder="incrementalMode && incrementalFields.src_ip ? 'base IP (e.g. 10.0.0.1)' : 'leave blank to skip'"
+                         class="bulk-input" :class="{ 'inc-active': incrementalMode && incrementalFields.src_ip }" />
+                </div>
+
+                <!-- Dst IP with optional increment -->
+                <div class="bulk-row inc-row">
+                  <div class="inc-row-label">
+                    <label>Dst IP</label>
+                    <label v-if="incrementalMode" class="inc-check-label" title="Increment this field">
+                      <input type="checkbox" v-model="incrementalFields.dst_ip" /> 📈
+                    </label>
+                  </div>
+                  <input v-model="bulkFields.dst_ip" type="text"
+                         :placeholder="incrementalMode && incrementalFields.dst_ip ? 'base IP (e.g. 192.168.1.1)' : 'leave blank to skip'"
+                         class="bulk-input" :class="{ 'inc-active': incrementalMode && incrementalFields.dst_ip }" />
+                </div>
+
+                <!-- Src Port with optional increment -->
+                <div class="bulk-row inc-row">
+                  <div class="inc-row-label">
+                    <label>Src Port</label>
+                    <label v-if="incrementalMode" class="inc-check-label" title="Increment this field">
+                      <input type="checkbox" v-model="incrementalFields.src_port" /> 📈
+                    </label>
+                  </div>
+                  <input v-model.number="bulkFields.src_port" type="number"
+                         :placeholder="incrementalMode && incrementalFields.src_port ? 'base port (e.g. 1024)' : 'leave blank to skip'"
+                         class="bulk-input" :class="{ 'inc-active': incrementalMode && incrementalFields.src_port }" />
+                </div>
+
+                <!-- Dst Port with optional increment -->
+                <div class="bulk-row inc-row">
+                  <div class="inc-row-label">
+                    <label>Dst Port</label>
+                    <label v-if="incrementalMode" class="inc-check-label" title="Increment this field">
+                      <input type="checkbox" v-model="incrementalFields.dst_port" /> 📈
+                    </label>
+                  </div>
+                  <input v-model.number="bulkFields.dst_port" type="number"
+                         :placeholder="incrementalMode && incrementalFields.dst_port ? 'base port (e.g. 80)' : 'leave blank to skip'"
+                         class="bulk-input" :class="{ 'inc-active': incrementalMode && incrementalFields.dst_port }" />
+                </div>
+              </div>
+
+              <div class="bulk-actions">
+                <button @click="applyBulkEdit" class="btn btn-primary" :disabled="bulkApplying">
+                  {{ bulkApplying ? '⏳ Applying…' : '⚡ Apply to Selected' }}
+                </button>
+                <button @click="resetBulkFields" class="btn btn-cancel">Clear Fields</button>
+              </div>
+              <p v-if="bulkResult" class="bulk-result">{{ bulkResult }}</p>
+            </div>
+          </div>
+
+        </div>
+
+
+        <!-- Delete confirm -->
+        <div v-if="deleteTargetIndex !== null" class="inline-confirm">
+          <span>🗑️ Delete packet #{{ deleteTargetIndex }}?</span>
+          <button @click="confirmDeletePacket" class="btn btn-danger-sm">Yes, Delete</button>
+          <button @click="deleteTargetIndex = null" class="btn btn-cancel-sm">Cancel</button>
+        </div>
+
+        <div v-if="packets.length === 0 && !loading" class="empty-state">
           <p>No packets found</p>
         </div>
       </section>
@@ -456,13 +637,37 @@ export default {
       showAddVlan: false,
       addVlanId: null,
       addVlanPriority: 0,
-      loadingDetails: false
+      loadingDetails: false,
+      // Bulk edit state
+      bulkMode: false,
+      selectedPackets: [],
+      bulkFields: { src_mac: '', dst_mac: '', src_ip: '', dst_ip: '', src_port: null, dst_port: null, vlan_id: null },
+      bulkApplying: false,
+      bulkResult: '',
+      // Incremental mode
+      incrementalMode: false,
+      incrementalStep: 1,
+      incrementalFields: { src_ip: false, dst_ip: false, src_port: false, dst_port: false },
+      // Replication
+      showReplicatePanel: false,
+      showBulkEditPanel: true,
+      replicateCount: 3,
+      replicateAutoSelect: true,
+      replicating: false,
+      replicateResult: '',
+      // Packet ops
+      deleteTargetIndex: null
     }
   },
   mounted() {
     const fileParam = this.$route.query.file
     if (fileParam) {
       this.loadFileFromPath(fileParam)
+    }
+  },
+  computed: {
+    allSelected() {
+      return this.packets.length > 0 && this.selectedPackets.length === this.packets.length
     }
   },
   methods: {
@@ -1036,7 +1241,6 @@ export default {
         })
         .then((response) => {
           if (response.data.success) {
-            // Update to modified file if returned
             if (response.data.data.modified_filepath) {
               this.updateToModifiedFile(response.data.data.modified_filepath)
             }
@@ -1053,12 +1257,477 @@ export default {
         .finally(() => {
           this.loading = false
         })
+    },
+
+    // -----------------------------------------------------------------------
+    // Bulk Mode
+    // -----------------------------------------------------------------------
+    toggleBulkMode() {
+      this.bulkMode = !this.bulkMode
+      if (!this.bulkMode) {
+        this.selectedPackets = []
+        this.bulkResult = ''
+        this.replicateResult = ''
+        this.incrementalMode = false
+      }
+    },
+
+    toggleSelectAll() {
+      if (this.allSelected) {
+        this.selectedPackets = []
+      } else {
+        this.selectedPackets = this.packets.map((_, i) => i)
+      }
+    },
+
+    togglePacketSelection(index) {
+      const pos = this.selectedPackets.indexOf(index)
+      if (pos === -1) {
+        this.selectedPackets.push(index)
+      } else {
+        this.selectedPackets.splice(pos, 1)
+      }
+    },
+
+    resetBulkFields() {
+      this.bulkFields = { src_mac: '', dst_mac: '', src_ip: '', dst_ip: '', src_port: null, dst_port: null, vlan_id: null }
+      this.bulkResult = ''
+      this.incrementalMode = false
+      this.incrementalStep = 1
+      this.incrementalFields = { src_ip: false, dst_ip: false, src_port: false, dst_port: false }
+    },
+
+    async applyBulkEdit() {
+      // Strip empty/null fields
+      const fields = {}
+      Object.entries(this.bulkFields).forEach(([k, v]) => {
+        if (v !== null && v !== '') fields[k] = v
+      })
+      if (Object.keys(fields).length === 0) {
+        this.bulkResult = '⚠️ Please fill at least one field.'
+        return
+      }
+
+      // Build incremental config
+      let incremental = null
+      if (this.incrementalMode) {
+        const incFieldList = Object.entries(this.incrementalFields)
+          .filter(([, v]) => v).map(([k]) => k)
+        if (incFieldList.length > 0) {
+          incremental = {
+            enabled: true,
+            step: this.incrementalStep || 1,
+            fields: incFieldList
+          }
+        }
+      }
+
+      this.bulkApplying = true
+      this.bulkResult = ''
+      try {
+        const res = await this.$axios.post(
+          `/pcap/bulk/${this.fileInfo.filepath}`,
+          { packet_indices: this.selectedPackets, fields, incremental }
+        )
+        if (res.data.success) {
+          const d = res.data.data
+          if (d.modified_filepath) this.updateToModifiedFile(d.modified_filepath)
+          this.bulkResult = `✅ Modified ${d.modified_count} of ${d.total_selected} packet(s).`
+          if (d.errors && d.errors.length) this.bulkResult += ` (${d.errors.length} skipped)`
+          await this.reloadPackets()
+        } else {
+          this.bulkResult = '❌ ' + (res.data.message || 'Bulk edit failed')
+        }
+      } catch (err) {
+        this.bulkResult = '❌ ' + (err.response?.data?.message || err.message)
+      } finally {
+        this.bulkApplying = false
+      }
+    },
+
+    async doReplicate() {
+      if (this.selectedPackets.length === 0 || this.replicateCount < 1) return
+      this.replicating = true
+      this.replicateResult = ''
+      try {
+        const res = await this.$axios.post(
+          `/pcap/replicate/${this.fileInfo.filepath}`,
+          { packet_indices: this.selectedPackets, count: this.replicateCount }
+        )
+        if (res.data.success) {
+          const d = res.data.data
+          if (d.modified_filepath) this.updateToModifiedFile(d.modified_filepath)
+          this.replicateResult = `✅ Created ${d.copy_count} copies. File now has ${d.new_packet_count} packets.`
+          await this.reloadPackets()
+          // Auto-select all copies if requested
+          if (this.replicateAutoSelect && d.new_indices) {
+            this.selectedPackets = [...d.new_indices]
+          }
+        } else {
+          this.replicateResult = '❌ ' + (res.data.message || 'Replication failed')
+        }
+      } catch (err) {
+        this.replicateResult = '❌ ' + (err.response?.data?.message || err.message)
+      } finally {
+        this.replicating = false
+      }
+    },
+
+    // -----------------------------------------------------------------------
+    // Packet operations: delete, duplicate, move
+    // -----------------------------------------------------------------------
+    askDeletePacket(index) {
+      this.deleteTargetIndex = index
+    },
+
+    async confirmDeletePacket() {
+      if (this.deleteTargetIndex === null) return
+      const idx = this.deleteTargetIndex
+      this.deleteTargetIndex = null
+      try {
+        const res = await this.$axios.delete(`/pcap/packet/${this.fileInfo.filepath}/${idx}`)
+        if (res.data.success) {
+          if (res.data.data.modified_filepath) this.updateToModifiedFile(res.data.data.modified_filepath)
+          if (this.selectedPacketIndex === idx) {
+            this.selectedPacket = null
+            this.selectedPacketIndex = null
+          }
+          await this.reloadPackets()
+        } else {
+          this.error = res.data.message || 'Delete failed'
+        }
+      } catch (err) {
+        this.error = err.response?.data?.message || err.message || 'Delete failed'
+      }
+    },
+
+    async doDuplicatePacket(index) {
+      try {
+        const res = await this.$axios.post(`/pcap/packet/${this.fileInfo.filepath}/${index}/duplicate`)
+        if (res.data.success) {
+          if (res.data.data.modified_filepath) this.updateToModifiedFile(res.data.data.modified_filepath)
+          await this.reloadPackets()
+        } else {
+          this.error = res.data.message || 'Duplicate failed'
+        }
+      } catch (err) {
+        this.error = err.response?.data?.message || err.message || 'Duplicate failed'
+      }
+    },
+
+    async doMovePacket(index, direction) {
+      try {
+        const res = await this.$axios.put(
+          `/pcap/packet/${this.fileInfo.filepath}/${index}/move`,
+          { direction }
+        )
+        if (res.data.success) {
+          if (res.data.data.modified_filepath) this.updateToModifiedFile(res.data.data.modified_filepath)
+          // Update selected index if it was the moved packet
+          if (this.selectedPacketIndex === index) {
+            this.selectedPacketIndex = res.data.data.new_index
+          }
+          await this.reloadPackets()
+        } else {
+          this.error = res.data.message || 'Move failed'
+        }
+      } catch (err) {
+        this.error = err.response?.data?.message || err.message || 'Move failed'
+      }
+    },
+
+    async reloadPackets() {
+      try {
+        const res = await this.$axios.get(`/pcap/${encodeURIComponent(this.fileInfo.filepath)}`)
+        if (res.data.success) {
+          this.packets = res.data.packets
+          this.fileInfo.packet_count = res.data.packets.length
+          this.statistics = res.data.statistics
+        }
+      } catch (err) {
+        this.error = err.message || 'Failed to reload packets'
+      }
     }
   }
 }
 </script>
 
 <style scoped>
+/* ---- Incremental + Replicate New Styles ---- */
+.bulk-panel-wrapper {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.bulk-sub-panel {
+  border: 2px solid #667eea;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.replicate-panel { border-color: #2ecc71; }
+
+.bulk-sub-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1.1rem;
+  background: #f0f4ff;
+  cursor: pointer;
+  font-weight: 600;
+  color: #667eea;
+  transition: background 0.2s;
+}
+
+.replicate-panel .bulk-sub-header { background: #e9f8ef; color: #27ae60; }
+.bulk-sub-header:hover { filter: brightness(0.97); }
+.chevron { font-size: 0.75rem; opacity: 0.7; }
+
+.bulk-sub-body {
+  padding: 1rem 1.1rem;
+  background: white;
+}
+
+/* Incremental mode */
+.inc-toggle-bar {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  background: #f8f9ff;
+  border: 1px solid #c8d0f5;
+  border-radius: 8px;
+  padding: 0.6rem 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+  user-select: none;
+  font-weight: 600;
+}
+
+.inc-badge { color: #667eea; }
+
+.step-control {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.88rem;
+  color: #555;
+}
+
+.step-input {
+  width: 4rem;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid #c8d0f5;
+  border-radius: 6px;
+  text-align: center;
+}
+
+.inc-hint {
+  font-size: 0.82rem;
+  color: #667eea;
+  background: #f0f4ff;
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
+  line-height: 1.5;
+}
+
+.inc-row { gap: 0.4rem; }
+
+.inc-row-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.inc-check-label {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: #667eea;
+}
+
+.inc-active {
+  border-color: #667eea !important;
+  background: #f0f4ff !important;
+}
+
+/* Replicate controls */
+.replicate-info {
+  color: #555;
+  font-size: 0.9rem;
+  margin-bottom: 0.75rem;
+}
+
+.replicate-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.replicate-count-input { width: 5rem !important; text-align: center; }
+
+.btn-replicate {
+  background: linear-gradient(135deg, #27ae60, #1abc9c);
+  color: white;
+  border: none;
+  padding: 0.65rem 1.3rem;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.25s;
+}
+
+.btn-replicate:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(39,174,96,0.4); }
+.btn-replicate:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ---- End incremental/replicate styles ---- */
+
+/* ---- New: Bulk & Packet-Ops Styles ---- */
+.section-header-actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.btn-bulk {
+  background: #f0f4ff;
+  color: #667eea;
+  border: 2px solid #667eea;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.25s;
+}
+
+.btn-bulk.active { background: #667eea; color: white; }
+.btn-bulk:hover { transform: translateY(-1px); }
+
+.select-all-bar {
+  background: #f0f4ff;
+  border-radius: 8px;
+  padding: 0.6rem 1rem;
+  margin-bottom: 0.75rem;
+  border: 1px solid #c8d0f5;
+}
+
+.select-all-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-weight: 600;
+  color: #667eea;
+}
+
+/* Restructured packet-item for checkbox + main + actions */
+.packet-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.packet-checkbox { flex-shrink: 0; width: 1.1rem; height: 1.1rem; cursor: pointer; }
+
+.packet-main { flex: 1; min-width: 0; cursor: pointer; }
+
+.packet-actions {
+  display: flex;
+  gap: 0.2rem;
+  flex-shrink: 0;
+}
+
+.pkt-btn {
+  background: none;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 0.25rem 0.4rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+  color: #555;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.pkt-btn:hover:not(:disabled) { background: #f0f4ff; transform: translateY(-1px); }
+.pkt-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+.pkt-btn-danger { color: #e74c3c; border-color: #e74c3c; }
+.pkt-btn-danger:hover:not(:disabled) { background: #fdecea; }
+
+.packet-item.bulk-selected { background: #e8eeff; border-color: #667eea; }
+
+/* Bulk edit panel */
+.bulk-edit-panel {
+  background: #f8f9ff;
+  border: 2px solid #667eea;
+  border-radius: 10px;
+  padding: 1.25rem;
+  margin-top: 1rem;
+}
+
+.bulk-edit-panel h3 { color: #667eea; margin: 0 0 1rem; font-size: 1rem; }
+
+.bulk-form { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
+
+.bulk-row { display: flex; flex-direction: column; gap: 0.25rem; }
+.bulk-row label { font-size: 0.8rem; font-weight: 600; color: #667eea; }
+.bulk-input {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid #c8d0f5;
+  border-radius: 6px;
+  font-size: 0.88rem;
+  outline: none;
+}
+.bulk-input:focus { border-color: #667eea; box-shadow: 0 0 0 2px rgba(102,126,234,0.15); }
+
+.bulk-actions { display: flex; gap: 0.75rem; margin-top: 1rem; flex-wrap: wrap; }
+
+.bulk-result { margin-top: 0.75rem; font-weight: 600; color: #2c3e50; }
+
+/* Delete inline confirm */
+.inline-confirm {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  border-radius: 8px;
+  padding: 0.7rem 1rem;
+  margin-top: 0.75rem;
+  font-weight: 600;
+  color: #856404;
+  flex-wrap: wrap;
+}
+
+.btn-danger-sm {
+  background: #e74c3c; color: white; border: none;
+  padding: 0.4rem 0.85rem; border-radius: 6px; cursor: pointer; font-weight: 600;
+}
+
+.btn-cancel-sm {
+  background: #ecf0f1; color: #333; border: none;
+  padding: 0.4rem 0.85rem; border-radius: 6px; cursor: pointer; font-weight: 600;
+}
+
+@media (max-width: 600px) {
+  .bulk-form { grid-template-columns: 1fr; }
+  .packet-actions { display: none; } /* hide on very small screens to avoid overflow */
+}
+
+/* ---- End new styles ---- */
+
 .pcap-editor-container {
   animation: fadeIn 0.5s ease-in;
   width: 100%;

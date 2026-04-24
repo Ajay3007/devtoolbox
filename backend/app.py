@@ -10,6 +10,7 @@ import os
 import json
 from datetime import datetime
 from pcap_handler import PCAPHandler
+from pdf_handler import PDFHandler
 from utils import generate_response, allowed_file
 
 # Configuration
@@ -28,8 +29,9 @@ CORS(app)
 # Create upload folder if it doesn't exist
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# Initialize PCAP handler
+# Initialize handlers
 pcap_handler = PCAPHandler(UPLOAD_FOLDER)
+pdf_handler  = PDFHandler(UPLOAD_FOLDER)
 
 
 @app.route('/api/health', methods=['GET'])
@@ -460,6 +462,131 @@ def add_vlan(filepath, packet_index):
         return generate_response(f'Error adding VLAN: {str(e)}', 500, False)
 
 
+@app.route('/api/pcap/field-values/<path:filepath>', methods=['GET'])
+def get_field_values(filepath):
+    """
+    Extract unique field values from an existing PCAP for seeding the generator.
+    Returns { fields: { src_mac:[], dst_mac:[], src_ip:[], dst_ip:[],
+                        src_port:[], dst_port:[], vlan_id:[] } }
+    """
+    try:
+        result = pcap_handler.extract_field_values(filepath)
+        if result['success']:
+            return generate_response(result, 200, True)
+        else:
+            return generate_response(result.get('error', 'Extraction failed'), 400, False)
+    except Exception as e:
+        return generate_response(f'Error extracting field values: {str(e)}', 500, False)
+
+
+@app.route('/api/pcap/bulk/<path:filepath>', methods=['POST'])
+def bulk_modify_packets(filepath):
+    """
+    Bulk-modify selected packets.
+    Request body: {
+        'packet_indices': [0, 1, 5],  // omit or null = all packets
+        'fields': { 'src_ip': '10.0.0.1', 'dst_mac': 'aa:bb:cc:dd:ee:ff', ... },
+        'incremental': {              // optional
+            'enabled': true,
+            'step': 1,
+            'fields': ['src_ip', 'dst_ip', 'src_port', 'dst_port']
+        }
+    }
+    """
+    try:
+        data = request.get_json()
+        if not data or 'fields' not in data:
+            return generate_response('fields dict is required', 400, False)
+
+        fields = data.get('fields', {})
+        packet_indices = data.get('packet_indices', None)  # None = all
+        incremental = data.get('incremental', None)
+
+        result = pcap_handler.bulk_modify_packets(filepath, packet_indices, fields, incremental)
+        if result['success']:
+            result['modified_filepath'] = result.get('modified_filepath', '').replace('\\', '/')
+            return generate_response(result, 200, True)
+        else:
+            return generate_response(result, 400, False)
+
+    except Exception as e:
+        return generate_response(f'Error in bulk modify: {str(e)}', 500, False)
+
+
+@app.route('/api/pcap/replicate/<path:filepath>', methods=['POST'])
+def replicate_packets(filepath):
+    """
+    Replicate selected packets N times.
+    Request body: { 'packet_indices': [0, 1, 2], 'count': 3 }
+    Copies inserted after the last selected packet, originals preserved.
+    """
+    try:
+        data = request.get_json()
+        if not data or 'packet_indices' not in data or 'count' not in data:
+            return generate_response('packet_indices and count are required', 400, False)
+
+        count = int(data['count'])
+        if count < 1 or count > 10000:
+            return generate_response('count must be between 1 and 10000', 400, False)
+
+        result = pcap_handler.replicate_packets(filepath, data['packet_indices'], count)
+        if result['success']:
+            result['modified_filepath'] = result.get('modified_filepath', '').replace('\\', '/')
+            return generate_response(result, 200, True)
+        else:
+            return generate_response(result, 400, False)
+    except Exception as e:
+        return generate_response(f'Error replicating packets: {str(e)}', 500, False)
+
+
+@app.route('/api/pcap/packet/<path:filepath>/<int:packet_index>', methods=['DELETE'])
+def delete_packet(filepath, packet_index):
+    """Delete a specific packet from the PCAP file."""
+    try:
+        result = pcap_handler.delete_packet(filepath, packet_index)
+        if result['success']:
+            result['modified_filepath'] = result.get('modified_filepath', '').replace('\\', '/')
+            return generate_response(result, 200, True)
+        else:
+            return generate_response(result, 400, False)
+    except Exception as e:
+        return generate_response(f'Error deleting packet: {str(e)}', 500, False)
+
+
+@app.route('/api/pcap/packet/<path:filepath>/<int:packet_index>/duplicate', methods=['POST'])
+def duplicate_packet(filepath, packet_index):
+    """Duplicate a packet (insert copy after original)."""
+    try:
+        result = pcap_handler.duplicate_packet(filepath, packet_index)
+        if result['success']:
+            result['modified_filepath'] = result.get('modified_filepath', '').replace('\\', '/')
+            return generate_response(result, 200, True)
+        else:
+            return generate_response(result, 400, False)
+    except Exception as e:
+        return generate_response(f'Error duplicating packet: {str(e)}', 500, False)
+
+
+@app.route('/api/pcap/packet/<path:filepath>/<int:packet_index>/move', methods=['PUT'])
+def move_packet(filepath, packet_index):
+    """
+    Move a packet.
+    Request body: { 'direction': 'up' | 'down' | 'top' | 'bottom' }
+    """
+    try:
+        data = request.get_json()
+        if not data or 'direction' not in data:
+            return generate_response('direction is required', 400, False)
+        result = pcap_handler.move_packet(filepath, packet_index, data['direction'])
+        if result['success']:
+            result['modified_filepath'] = result.get('modified_filepath', '').replace('\\', '/')
+            return generate_response(result, 200, True)
+        else:
+            return generate_response(result, 400, False)
+    except Exception as e:
+        return generate_response(f'Error moving packet: {str(e)}', 500, False)
+
+
 @app.route('/api/pcap/generate', methods=['POST'])
 def generate_pcap():
     """
@@ -571,6 +698,67 @@ def merge_pcaps():
         return generate_response(f'Error merging PCAP files: {str(e)}', 500, False)
 
 
+# ---------------------------------------------------------------------------
+# File Management Endpoints
+# ---------------------------------------------------------------------------
+
+@app.route('/api/files', methods=['GET'])
+def list_files():
+    """List all files in the uploads folder with metadata."""
+    try:
+        files = []
+        for filename in os.listdir(UPLOAD_FOLDER):
+            filepath = os.path.join(UPLOAD_FOLDER, filename)
+            if os.path.isfile(filepath):
+                stat = os.stat(filepath)
+                files.append({
+                    'name': filename,
+                    'size': stat.st_size,
+                    'modified': datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                    'extension': os.path.splitext(filename)[1].lower().lstrip('.')
+                })
+        files.sort(key=lambda x: x['modified'], reverse=True)
+        return jsonify({'success': True, 'files': files, 'count': len(files)})
+    except Exception as e:
+        return generate_response(f'Error listing files: {str(e)}', 500, False)
+
+
+@app.route('/api/files/<filename>', methods=['DELETE'])
+def delete_upload_file(filename):
+    """Delete a file from the uploads folder."""
+    try:
+        filepath = os.path.join(UPLOAD_FOLDER, secure_filename(filename))
+        if not os.path.exists(filepath):
+            return generate_response('File not found', 404, False)
+        os.remove(filepath)
+        return jsonify({'success': True, 'message': f'File {filename} deleted'})
+    except Exception as e:
+        return generate_response(f'Error deleting file: {str(e)}', 500, False)
+
+
+@app.route('/api/files/<filename>/rename', methods=['PUT'])
+def rename_upload_file(filename):
+    """
+    Rename a file in uploads.
+    Request body: { 'new_name': 'new_filename.pcap' }
+    """
+    try:
+        data = request.get_json()
+        if not data or 'new_name' not in data:
+            return generate_response('new_name is required', 400, False)
+        old_path = os.path.join(UPLOAD_FOLDER, secure_filename(filename))
+        new_name = secure_filename(data['new_name'])
+        new_path = os.path.join(UPLOAD_FOLDER, new_name)
+        if not os.path.exists(old_path):
+            return generate_response('File not found', 404, False)
+        if os.path.exists(new_path):
+            return generate_response('A file with that name already exists', 400, False)
+        os.rename(old_path, new_path)
+        return jsonify({'success': True, 'new_name': new_name})
+    except Exception as e:
+        return generate_response(f'Error renaming file: {str(e)}', 500, False)
+
+
 @app.route('/api/hex/upload', methods=['POST'])
 def upload_hex_file():
     """Upload any file for hex viewing"""
@@ -644,6 +832,120 @@ def upload_hex_file():
 
     except Exception as e:
         return generate_response(f'Error uploading file: {str(e)}', 500, False)
+
+
+# =============================================================================
+# PDF Editor Routes
+# =============================================================================
+
+@app.route('/api/pdf/upload', methods=['POST'])
+def upload_pdf():
+    """Upload a PDF file and return basic metadata."""
+    if 'file' not in request.files:
+        return generate_response('No file provided', 400, False)
+    f = request.files['file']
+    if not f.filename:
+        return generate_response('No file selected', 400, False)
+    if not f.filename.lower().endswith('.pdf'):
+        return generate_response('Only PDF files are supported', 400, False)
+    filename = secure_filename(f.filename)
+    save_path = os.path.join(UPLOAD_FOLDER, filename)
+    f.save(save_path)
+    try:
+        info = pdf_handler.get_info(filename)
+        info['filepath'] = filename
+        return generate_response(info, 200, True)
+    except Exception as e:
+        return generate_response(str(e), 500, False)
+
+
+@app.route('/api/pdf/<path:filepath>/info', methods=['GET'])
+def get_pdf_info(filepath):
+    try:
+        result = pdf_handler.get_info(filepath)
+        return generate_response(result, 200, True) if result['success'] \
+            else generate_response(result.get('error', 'Failed'), 400, False)
+    except Exception as e:
+        return generate_response(str(e), 500, False)
+
+
+@app.route('/api/pdf/<path:filepath>/page/<int:page_num>', methods=['GET'])
+def render_pdf_page(filepath, page_num):
+    try:
+        scale = float(request.args.get('scale', 1.5))
+        result = pdf_handler.render_page(filepath, page_num, scale)
+        return generate_response(result, 200, True) if result['success'] \
+            else generate_response(result.get('error', 'Failed'), 400, False)
+    except Exception as e:
+        return generate_response(str(e), 500, False)
+
+
+@app.route('/api/pdf/<path:filepath>/text/<int:page_num>', methods=['GET'])
+def get_pdf_text(filepath, page_num):
+    try:
+        result = pdf_handler.get_text_blocks(filepath, page_num)
+        return generate_response(result, 200, True) if result['success'] \
+            else generate_response(result.get('error', 'Failed'), 400, False)
+    except Exception as e:
+        return generate_response(str(e), 500, False)
+
+
+@app.route('/api/pdf/<path:filepath>/save', methods=['POST'])
+def save_pdf(filepath):
+    """Apply text edits and save as a new PDF file."""
+    try:
+        data = request.get_json() or {}
+        edits = data.get('edits', [])
+        deleted_pages = data.get('deleted_pages', [])
+        metadata = data.get('metadata', None)
+        watermark = data.get('watermark', None)
+        output_name = data.get('output_name', None)
+        result = pdf_handler.apply_edits(filepath, edits, output_name, deleted_pages, metadata, watermark)
+        if result['success']:
+            result['output_path'] = result.get('output_path', '').replace('\\', '/')
+            return generate_response(result, 200, True)
+        return generate_response(result.get('error', 'Save failed'), 400, False)
+    except Exception as e:
+        return generate_response(str(e), 500, False)
+
+@app.route('/api/pdf/<path:filepath>/append', methods=['POST'])
+def append_pdf(filepath):
+    """Append a second PDF to the current working PDF."""
+    try:
+        if 'file' not in request.files:
+            return generate_response('No file part', 400, False)
+            
+        file = request.files['file']
+        if file.filename == '' or not allowed_file(file.filename, {'pdf'}):
+            return generate_response('Invalid file', 400, False)
+
+        # Save the appended file temporarily
+        append_filename = secure_filename(file.filename)
+        append_filepath = os.path.join(app.config['UPLOAD_FOLDER'], 'append_' + append_filename)
+        file.save(append_filepath)
+        
+        # Append it
+        result = pdf_handler.append_pdf(filepath, append_filepath)
+        
+        # Cleanup temp file
+        if os.path.exists(append_filepath):
+            os.remove(append_filepath)
+            
+        if result['success']:
+            return generate_response(result, 200, True)
+        return generate_response(result.get('error', 'Append failed'), 400, False)
+    except Exception as e:
+        return generate_response(str(e), 500, False)
+
+
+@app.route('/api/pdf/download/<path:filepath>', methods=['GET'])
+def download_pdf(filepath):
+    try:
+        resolved = pdf_handler._resolve(filepath)
+        return send_file(resolved, as_attachment=True,
+                         download_name=os.path.basename(resolved))
+    except Exception as e:
+        return generate_response(str(e), 404, False)
 
 
 if __name__ == '__main__':

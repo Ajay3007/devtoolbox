@@ -4,6 +4,8 @@ import PCAPEditor from '../views/PCAPEditor.vue'
 import PCAPGenerator from '../views/PCAPGenerator.vue'
 import PCAPMerger from '../views/PCAPMerger.vue'
 import HexViewer from '../views/HexViewer.vue'
+import FileManager from '../views/FileManager.vue'
+import PDFEditor from '../views/PDFEditor.vue'
 
 const routes = [
   {
@@ -30,6 +32,16 @@ const routes = [
     path: '/hex-viewer',
     name: 'hex-viewer',
     component: HexViewer
+  },
+  {
+    path: '/file-manager',
+    name: 'file-manager',
+    component: FileManager
+  },
+  {
+    path: '/pdf-editor',
+    name: 'pdf-editor',
+    component: PDFEditor
   }
 ]
 

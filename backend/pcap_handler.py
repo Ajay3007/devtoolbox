@@ -5,7 +5,7 @@ Manages reading, writing, and modifying PCAP files using Scapy
 
 import os
 import shutil
-from scapy.all import rdpcap, wrpcap, IP, IPv6, TCP, UDP, ICMP, Raw, Ether, Dot1Q, DNS, DNSQR, DNSRR
+from scapy.all import rdpcap, wrpcap, IP, IPv6, TCP, UDP, ICMP, Raw, Ether, Dot1Q, DNS, DNSQR, DNSRR, ARP
 from collections import defaultdict
 import binascii
 import re
@@ -1055,9 +1055,10 @@ class PCAPHandler:
                     eth = Ether(src=src_mac, dst=dst_mac)
                     if vlan_id is not None:
                         eth = eth / Dot1Q(vlan=vlan_id)
-                    
+
                     # UDP doesn't need full flow - single packet
-                    pkt = eth / IP(src=src_ip, dst=current_dst_ip) / UDP(sport=current_src_port, dport=dst_port) / Raw(load=f"UDP Packet {i+1}")
+                    ip_l = self._ip_layer(src_ip, current_dst_ip)
+                    pkt = eth / ip_l / UDP(sport=current_src_port, dport=dst_port) / Raw(load=f"UDP Packet {i+1}")
                     packets.append(pkt)
                 
                 elif protocol == 'dns_udp':
@@ -1065,15 +1066,17 @@ class PCAPHandler:
                     eth = Ether(src=src_mac, dst=dst_mac)
                     if vlan_id is not None:
                         eth = eth / Dot1Q(vlan=vlan_id)
-                    
+
                     dns_query = options.get('dns_query', 'example.com')
+                    ip_fwd = self._ip_layer(src_ip, current_dst_ip)
+                    ip_rev = self._ip_layer(current_dst_ip, src_ip)
                     # DNS Query
-                    query_pkt = eth / IP(src=src_ip, dst=current_dst_ip) / UDP(sport=current_src_port, dport=53) / DNS(rd=1, qd=DNSQR(qname=dns_query))
+                    query_pkt = eth / ip_fwd / UDP(sport=current_src_port, dport=53) / DNS(rd=1, qd=DNSQR(qname=dns_query))
                     packets.append(query_pkt)
-                    
+
                     # DNS Response
-                    response_pkt = eth / IP(src=current_dst_ip, dst=src_ip) / UDP(sport=53, dport=current_src_port) / DNS(
-                        id=query_pkt[DNS].id, qr=1, aa=1, qd=DNSQR(qname=dns_query), 
+                    response_pkt = eth / ip_rev / UDP(sport=53, dport=current_src_port) / DNS(
+                        id=query_pkt[DNS].id, qr=1, aa=1, qd=DNSQR(qname=dns_query),
                         an=DNSRR(rrname=dns_query, ttl=300, rdata=current_dst_ip)
                     )
                     packets.append(response_pkt)
@@ -1085,7 +1088,49 @@ class PCAPHandler:
                         current_src_port, 53, protocol, vlan_id, i, options
                     )
                     packets.extend(flow_packets)
-                
+
+                elif protocol == 'icmp':
+                    # Build Ethernet layer
+                    eth = Ether(src=src_mac, dst=dst_mac)
+                    eth_rev = Ether(src=dst_mac, dst=src_mac)
+                    if vlan_id is not None:
+                        eth = eth / Dot1Q(vlan=vlan_id)
+                        eth_rev = eth_rev / Dot1Q(vlan=vlan_id)
+                    icmp_id = (i + 1) & 0xFFFF
+                    icmp_seq = (i + 1) & 0xFFFF
+                    payload = options.get('icmp_payload', 'DevToolBox ICMP').encode()[:56]
+
+                    import ipaddress as _ipaddr
+                    try:
+                        _is_v6 = _ipaddr.ip_address(src_ip).version == 6
+                    except ValueError:
+                        _is_v6 = False
+
+                    if _is_v6:
+                        from scapy.layers.inet6 import ICMPv6EchoRequest, ICMPv6EchoReply
+                        req = eth / IPv6(src=src_ip, dst=current_dst_ip) / ICMPv6EchoRequest(id=icmp_id, seq=icmp_seq) / Raw(load=payload)
+                        rep = eth_rev / IPv6(src=current_dst_ip, dst=src_ip) / ICMPv6EchoReply(id=icmp_id, seq=icmp_seq) / Raw(load=payload)
+                    else:
+                        req = eth / IP(src=src_ip, dst=current_dst_ip) / ICMP(type=8, code=0, id=icmp_id, seq=icmp_seq) / Raw(load=payload)
+                        rep = eth_rev / IP(src=current_dst_ip, dst=src_ip) / ICMP(type=0, code=0, id=icmp_id, seq=icmp_seq) / Raw(load=payload)
+                    packets.append(req)
+                    packets.append(rep)
+
+                elif protocol == 'arp':
+                    target_ip = options.get('target_ip', current_dst_ip)
+                    # ARP Request (broadcast)
+                    arp_req = Ether(src=src_mac, dst='ff:ff:ff:ff:ff:ff') / ARP(
+                        op='who-has', hwsrc=src_mac, psrc=src_ip,
+                        hwdst='00:00:00:00:00:00', pdst=target_ip
+                    )
+                    packets.append(arp_req)
+                    # ARP Reply
+                    arp_rep = Ether(src=dst_mac, dst=src_mac) / ARP(
+                        op='is-at', hwsrc=dst_mac, psrc=target_ip,
+                        hwdst=src_mac, pdst=src_ip
+                    )
+                    packets.append(arp_rep)
+
                 else:
                     return {'success': False, 'error': f'Unsupported protocol: {protocol}'}
             
@@ -1159,33 +1204,105 @@ class PCAPHandler:
         except Exception as e:
             return {'success': False, 'error': str(e)}
 
+    def extract_field_values(self, filepath):
+        """
+        Read a PCAP/PCAPNG file and return sorted unique values
+        for each configurable generator field.
+        """
+        try:
+            resolved = filepath
+            if not os.path.isabs(resolved) and not os.path.exists(resolved):
+                resolved = os.path.join(self.upload_folder, os.path.basename(filepath))
+            if not os.path.exists(resolved):
+                return {'success': False, 'error': f'File not found: {filepath}'}
+
+            packets = rdpcap(resolved)
+
+            src_macs, dst_macs = set(), set()
+            src_ips,  dst_ips  = set(), set()
+            src_ports, dst_ports = set(), set()
+            vlans = set()
+
+            for pkt in packets:
+                if pkt.haslayer(Ether):
+                    src_macs.add(pkt[Ether].src)
+                    dst_macs.add(pkt[Ether].dst)
+                if pkt.haslayer(Dot1Q):
+                    vlans.add(pkt[Dot1Q].vlan)
+                if pkt.haslayer(IP):
+                    src_ips.add(pkt[IP].src)
+                    dst_ips.add(pkt[IP].dst)
+                if pkt.haslayer(IPv6):
+                    src_ips.add(pkt[IPv6].src)
+                    dst_ips.add(pkt[IPv6].dst)
+                if pkt.haslayer(TCP):
+                    src_ports.add(pkt[TCP].sport)
+                    dst_ports.add(pkt[TCP].dport)
+                if pkt.haslayer(UDP):
+                    src_ports.add(pkt[UDP].sport)
+                    dst_ports.add(pkt[UDP].dport)
+
+            return {
+                'success': True,
+                'packet_count': len(packets),
+                'fields': {
+                    'src_mac':  sorted(src_macs),
+                    'dst_mac':  sorted(dst_macs),
+                    'src_ip':   sorted(src_ips),
+                    'dst_ip':   sorted(dst_ips),
+                    'src_port': sorted(src_ports),
+                    'dst_port': sorted(dst_ports),
+                    'vlan_id':  sorted(vlans),
+                }
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _ip_layer(self, src, dst):
+        """Return IPv6() or IP() based on whether src is an IPv6 address."""
+        import ipaddress
+        try:
+            addr = ipaddress.ip_address(src)
+            if addr.version == 6:
+                return IPv6(src=src, dst=dst)
+        except ValueError:
+            pass
+        return IP(src=src, dst=dst)
+
     def _generate_tcp_flow(self, src_mac, dst_mac, src_ip, dst_ip, src_port, dst_port, protocol, vlan_id, index, options):
         """Generate a complete TCP 3-way handshake, data exchange, and connection termination"""
         import random
         
         flow_packets = []
-        
+
         # Initial sequence numbers
         client_seq = random.randint(1000, 100000)
         server_seq = random.randint(1000, 100000)
-        
+
         # Build base Ethernet layer
         def build_eth():
             eth = Ether(src=src_mac, dst=dst_mac)
             if vlan_id is not None:
                 eth = eth / Dot1Q(vlan=vlan_id)
             return eth
-        
+
+        # IP layer helper — honours IPv4 / IPv6
+        def ip_fwd():
+            return self._ip_layer(src_ip, dst_ip)
+
+        def ip_rev():
+            return self._ip_layer(dst_ip, src_ip)
+
         # 1. SYN: Client initiates connection
-        syn_pkt = build_eth() / IP(src=src_ip, dst=dst_ip) / TCP(sport=src_port, dport=dst_port, flags='S', seq=client_seq)
+        syn_pkt = build_eth() / ip_fwd() / TCP(sport=src_port, dport=dst_port, flags='S', seq=client_seq)
         flow_packets.append(syn_pkt)
-        
+
         # 2. SYN-ACK: Server acknowledges and sends its SYN
-        synack_pkt = build_eth() / IP(src=dst_ip, dst=src_ip) / TCP(sport=dst_port, dport=src_port, flags='SA', seq=server_seq, ack=client_seq + 1)
+        synack_pkt = build_eth() / ip_rev() / TCP(sport=dst_port, dport=src_port, flags='SA', seq=server_seq, ack=client_seq + 1)
         flow_packets.append(synack_pkt)
-        
+
         # 3. ACK: Client acknowledges server's SYN
-        ack_pkt = build_eth() / IP(src=src_ip, dst=dst_ip) / TCP(sport=src_port, dport=dst_port, flags='A', seq=client_seq + 1, ack=server_seq + 1)
+        ack_pkt = build_eth() / ip_fwd() / TCP(sport=src_port, dport=dst_port, flags='A', seq=client_seq + 1, ack=server_seq + 1)
         flow_packets.append(ack_pkt)
         
         # 4. Data transfer: PSH-ACK with payload
@@ -1198,9 +1315,9 @@ class PCAPHandler:
                 f"\r\n"
             )
             payload = http_request.encode()
-            data_pkt = build_eth() / IP(src=src_ip, dst=dst_ip) / TCP(sport=src_port, dport=dst_port, flags='PA', seq=client_seq + 1, ack=server_seq + 1) / Raw(load=payload)
+            data_pkt = build_eth() / ip_fwd() / TCP(sport=src_port, dport=dst_port, flags='PA', seq=client_seq + 1, ack=server_seq + 1) / Raw(load=payload)
             flow_packets.append(data_pkt)
-            
+
             # HTTP Response
             http_response = (
                 f"HTTP/1.1 200 OK\r\n"
@@ -1210,13 +1327,13 @@ class PCAPHandler:
                 f"Hello World!\n"
             )
             response_payload = http_response.encode()
-            response_pkt = build_eth() / IP(src=dst_ip, dst=src_ip) / TCP(sport=dst_port, dport=src_port, flags='PA', seq=server_seq + 1, ack=client_seq + 1 + len(payload)) / Raw(load=response_payload)
+            response_pkt = build_eth() / ip_rev() / TCP(sport=dst_port, dport=src_port, flags='PA', seq=server_seq + 1, ack=client_seq + 1 + len(payload)) / Raw(load=response_payload)
             flow_packets.append(response_pkt)
-            
+
             # Client ACK for response
-            ack_response = build_eth() / IP(src=src_ip, dst=dst_ip) / TCP(sport=src_port, dport=dst_port, flags='A', seq=client_seq + 1 + len(payload), ack=server_seq + 1 + len(response_payload))
+            ack_response = build_eth() / ip_fwd() / TCP(sport=src_port, dport=dst_port, flags='A', seq=client_seq + 1 + len(payload), ack=server_seq + 1 + len(response_payload))
             flow_packets.append(ack_response)
-            
+
             client_seq += len(payload)
             server_seq += len(response_payload)
             
@@ -1224,14 +1341,14 @@ class PCAPHandler:
             # TLS Client Hello
             sni = options.get('tls_sni', 'example.com')
             tls_hello = self._build_tls_client_hello(sni)
-            tls_pkt = build_eth() / IP(src=src_ip, dst=dst_ip) / TCP(sport=src_port, dport=dst_port, flags='PA', seq=client_seq + 1, ack=server_seq + 1) / Raw(load=tls_hello)
+            tls_pkt = build_eth() / ip_fwd() / TCP(sport=src_port, dport=dst_port, flags='PA', seq=client_seq + 1, ack=server_seq + 1) / Raw(load=tls_hello)
             flow_packets.append(tls_pkt)
-            
+
             # TLS Server Hello (simplified)
             server_hello = b'\x16\x03\x03\x00\x31' + bytes([0x00] * 49)  # Minimal TLS Server Hello
-            tls_response = build_eth() / IP(src=dst_ip, dst=src_ip) / TCP(sport=dst_port, dport=src_port, flags='PA', seq=server_seq + 1, ack=client_seq + 1 + len(tls_hello)) / Raw(load=server_hello)
+            tls_response = build_eth() / ip_rev() / TCP(sport=dst_port, dport=src_port, flags='PA', seq=server_seq + 1, ack=client_seq + 1 + len(tls_hello)) / Raw(load=server_hello)
             flow_packets.append(tls_response)
-            
+
             client_seq += len(tls_hello)
             server_seq += len(server_hello)
             
@@ -1241,49 +1358,49 @@ class PCAPHandler:
             dns_bytes = bytes(dns)
             dns_len = len(dns_bytes).to_bytes(2, 'big')
             payload = dns_len + dns_bytes
-            
-            data_pkt = build_eth() / IP(src=src_ip, dst=dst_ip) / TCP(sport=src_port, dport=dst_port, flags='PA', seq=client_seq + 1, ack=server_seq + 1) / Raw(load=payload)
+
+            data_pkt = build_eth() / ip_fwd() / TCP(sport=src_port, dport=dst_port, flags='PA', seq=client_seq + 1, ack=server_seq + 1) / Raw(load=payload)
             flow_packets.append(data_pkt)
-            
+
             # DNS Response
             dns_response = DNS(id=dns.id, qr=1, aa=1, qd=DNSQR(qname=dns_query), an=DNSRR(rrname=dns_query, ttl=300, rdata=dst_ip))
             dns_response_bytes = bytes(dns_response)
             dns_response_len = len(dns_response_bytes).to_bytes(2, 'big')
             response_payload = dns_response_len + dns_response_bytes
-            
-            response_pkt = build_eth() / IP(src=dst_ip, dst=src_ip) / TCP(sport=dst_port, dport=src_port, flags='PA', seq=server_seq + 1, ack=client_seq + 1 + len(payload)) / Raw(load=response_payload)
+
+            response_pkt = build_eth() / ip_rev() / TCP(sport=dst_port, dport=src_port, flags='PA', seq=server_seq + 1, ack=client_seq + 1 + len(payload)) / Raw(load=response_payload)
             flow_packets.append(response_pkt)
-            
+
             client_seq += len(payload)
             server_seq += len(response_payload)
-            
+
         else:  # tcp
             payload = f"TCP Data Packet {index + 1}".encode()
-            data_pkt = build_eth() / IP(src=src_ip, dst=dst_ip) / TCP(sport=src_port, dport=dst_port, flags='PA', seq=client_seq + 1, ack=server_seq + 1) / Raw(load=payload)
+            data_pkt = build_eth() / ip_fwd() / TCP(sport=src_port, dport=dst_port, flags='PA', seq=client_seq + 1, ack=server_seq + 1) / Raw(load=payload)
             flow_packets.append(data_pkt)
-            
+
             # Server ACK
-            ack_data = build_eth() / IP(src=dst_ip, dst=src_ip) / TCP(sport=dst_port, dport=src_port, flags='A', seq=server_seq + 1, ack=client_seq + 1 + len(payload))
+            ack_data = build_eth() / ip_rev() / TCP(sport=dst_port, dport=src_port, flags='A', seq=server_seq + 1, ack=client_seq + 1 + len(payload))
             flow_packets.append(ack_data)
-            
+
             client_seq += len(payload)
-        
+
         # 5. FIN: Client initiates connection close
-        fin_pkt = build_eth() / IP(src=src_ip, dst=dst_ip) / TCP(sport=src_port, dport=dst_port, flags='FA', seq=client_seq + 1, ack=server_seq + 1)
+        fin_pkt = build_eth() / ip_fwd() / TCP(sport=src_port, dport=dst_port, flags='FA', seq=client_seq + 1, ack=server_seq + 1)
         flow_packets.append(fin_pkt)
-        
+
         # 6. ACK: Server acknowledges FIN
-        ack_fin_pkt = build_eth() / IP(src=dst_ip, dst=src_ip) / TCP(sport=dst_port, dport=src_port, flags='A', seq=server_seq + 1, ack=client_seq + 2)
+        ack_fin_pkt = build_eth() / ip_rev() / TCP(sport=dst_port, dport=src_port, flags='A', seq=server_seq + 1, ack=client_seq + 2)
         flow_packets.append(ack_fin_pkt)
-        
+
         # 7. FIN: Server sends its FIN
-        fin_server_pkt = build_eth() / IP(src=dst_ip, dst=src_ip) / TCP(sport=dst_port, dport=src_port, flags='FA', seq=server_seq + 1, ack=client_seq + 2)
+        fin_server_pkt = build_eth() / ip_rev() / TCP(sport=dst_port, dport=src_port, flags='FA', seq=server_seq + 1, ack=client_seq + 2)
         flow_packets.append(fin_server_pkt)
-        
+
         # 8. ACK: Client acknowledges server's FIN
-        final_ack_pkt = build_eth() / IP(src=src_ip, dst=dst_ip) / TCP(sport=src_port, dport=dst_port, flags='A', seq=client_seq + 2, ack=server_seq + 2)
+        final_ack_pkt = build_eth() / ip_fwd() / TCP(sport=src_port, dport=dst_port, flags='A', seq=client_seq + 2, ack=server_seq + 2)
         flow_packets.append(final_ack_pkt)
-        
+
         return flow_packets
     
     def _build_tls_client_hello(self, sni):
@@ -1336,3 +1453,257 @@ class PCAPHandler:
         tls_record += handshake
         
         return tls_record
+
+    # -------------------------------------------------------------------------
+    # Bulk / Structural packet operations
+    # -------------------------------------------------------------------------
+
+    def bulk_modify_packets(self, filepath, packet_indices, fields, incremental=None):
+        """
+        Modify selected packets in bulk.
+        packet_indices: list of int indices, or None to modify all packets.
+        fields: dict with any of src_ip, dst_ip, src_mac, dst_mac,
+                src_port, dst_port, vlan_id.
+        incremental: optional dict:
+            {
+                'enabled': True,
+                'step': 1,
+                'fields': ['src_ip', 'dst_ip', 'src_port', 'dst_port']
+            }
+            When enabled, the listed fields are incremented by step*i
+            for the i-th selected packet (i=0,1,2,...)
+        """
+        import ipaddress as _ipaddr
+        try:
+            modified_filepath = self._get_modified_filepath(filepath)
+            packets = rdpcap(modified_filepath)
+            n = len(packets)
+            indices = list(range(n)) if packet_indices is None else [
+                i for i in packet_indices if 0 <= i < n
+            ]
+            packet_list = list(packets)
+            modified_count = 0
+            errors = []
+
+            # Resolve incremental configuration
+            inc_enabled = bool(incremental and incremental.get('enabled', False))
+            inc_step = int(incremental.get('step', 1)) if incremental else 1
+            inc_fields = set(incremental.get('fields', [])) if incremental else set()
+
+            # Pre-parse base IP addresses for increment
+            base_src_ip = None
+            base_dst_ip = None
+            if inc_enabled:
+                if 'src_ip' in inc_fields and fields.get('src_ip'):
+                    try:
+                        base_src_ip = _ipaddr.ip_address(fields['src_ip'])
+                    except Exception:
+                        pass
+                if 'dst_ip' in inc_fields and fields.get('dst_ip'):
+                    try:
+                        base_dst_ip = _ipaddr.ip_address(fields['dst_ip'])
+                    except Exception:
+                        pass
+
+            for i, idx in enumerate(indices):
+                pkt = packet_list[idx]
+                changed = False
+                try:
+                    # Compute effective values for this packet
+                    eff = dict(fields)
+                    if inc_enabled:
+                        if base_src_ip is not None:
+                            eff['src_ip'] = str(base_src_ip + i * inc_step)
+                        if base_dst_ip is not None:
+                            eff['dst_ip'] = str(base_dst_ip + i * inc_step)
+                        if 'src_port' in inc_fields and eff.get('src_port') is not None:
+                            raw = int(eff['src_port']) + i * inc_step
+                            eff['src_port'] = ((raw - 1) % 65535) + 1  # wrap 1-65535
+                        if 'dst_port' in inc_fields and eff.get('dst_port') is not None:
+                            raw = int(eff['dst_port']) + i * inc_step
+                            eff['dst_port'] = ((raw - 1) % 65535) + 1
+
+                    if pkt.haslayer(Ether):
+                        if eff.get('src_mac'):
+                            pkt[Ether].src = eff['src_mac']
+                            changed = True
+                        if eff.get('dst_mac'):
+                            pkt[Ether].dst = eff['dst_mac']
+                            changed = True
+
+                    if pkt.haslayer(Dot1Q) and eff.get('vlan_id') is not None:
+                        pkt[Dot1Q].vlan = int(eff['vlan_id'])
+                        changed = True
+
+                    if pkt.haslayer(IP):
+                        if eff.get('src_ip'):
+                            pkt[IP].src = eff['src_ip']
+                            changed = True
+                        if eff.get('dst_ip'):
+                            pkt[IP].dst = eff['dst_ip']
+                            changed = True
+                    elif pkt.haslayer(IPv6):
+                        if eff.get('src_ip'):
+                            pkt[IPv6].src = eff['src_ip']
+                            changed = True
+                        if eff.get('dst_ip'):
+                            pkt[IPv6].dst = eff['dst_ip']
+                            changed = True
+
+                    if pkt.haslayer(TCP):
+                        if eff.get('src_port') is not None:
+                            pkt[TCP].sport = int(eff['src_port'])
+                            changed = True
+                        if eff.get('dst_port') is not None:
+                            pkt[TCP].dport = int(eff['dst_port'])
+                            changed = True
+                    elif pkt.haslayer(UDP):
+                        if eff.get('src_port') is not None:
+                            pkt[UDP].sport = int(eff['src_port'])
+                            changed = True
+                        if eff.get('dst_port') is not None:
+                            pkt[UDP].dport = int(eff['dst_port'])
+                            changed = True
+
+                    if changed:
+                        pkt = self._recalculate_checksums(pkt)
+                        packet_list[idx] = pkt
+                        modified_count += 1
+                except Exception as e:
+                    errors.append(f'Packet {idx}: {str(e)}')
+
+            wrpcap(modified_filepath, packet_list)
+            return {
+                'success': True,
+                'modified_count': modified_count,
+                'total_selected': len(indices),
+                'errors': errors,
+                'modified_filepath': modified_filepath
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def delete_packet(self, filepath, packet_index):
+        """Delete a packet at the given index."""
+        try:
+            modified_filepath = self._get_modified_filepath(filepath)
+            packets = rdpcap(modified_filepath)
+            if packet_index < 0 or packet_index >= len(packets):
+                return {'success': False, 'error': 'Invalid packet index'}
+            packet_list = list(packets)
+            del packet_list[packet_index]
+            wrpcap(modified_filepath, packet_list)
+            return {
+                'success': True,
+                'new_packet_count': len(packet_list),
+                'modified_filepath': modified_filepath
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def duplicate_packet(self, filepath, packet_index):
+        """Duplicate a packet, inserting the copy right after the original."""
+        try:
+            modified_filepath = self._get_modified_filepath(filepath)
+            packets = rdpcap(modified_filepath)
+            if packet_index < 0 or packet_index >= len(packets):
+                return {'success': False, 'error': 'Invalid packet index'}
+            packet_list = list(packets)
+            original = packet_list[packet_index]
+            # Deep copy via re-parsing bytes
+            duplicate = original.__class__(bytes(original))
+            if hasattr(original, 'time'):
+                duplicate.time = original.time
+            packet_list.insert(packet_index + 1, duplicate)
+            wrpcap(modified_filepath, packet_list)
+            return {
+                'success': True,
+                'new_packet_count': len(packet_list),
+                'new_index': packet_index + 1,
+                'modified_filepath': modified_filepath
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def move_packet(self, filepath, packet_index, direction):
+        """Move a packet: direction is 'up', 'down', 'top', or 'bottom'."""
+        try:
+            modified_filepath = self._get_modified_filepath(filepath)
+            packets = rdpcap(modified_filepath)
+            n = len(packets)
+            if packet_index < 0 or packet_index >= n:
+                return {'success': False, 'error': 'Invalid packet index'}
+            packet_list = list(packets)
+            pkt = packet_list.pop(packet_index)
+            if direction == 'up':
+                new_index = max(0, packet_index - 1)
+            elif direction == 'down':
+                new_index = min(n - 1, packet_index + 1)
+            elif direction == 'top':
+                new_index = 0
+            elif direction == 'bottom':
+                new_index = n - 1
+            else:
+                packet_list.insert(packet_index, pkt)
+                return {'success': False, 'error': f'Invalid direction: {direction}'}
+            packet_list.insert(new_index, pkt)
+            wrpcap(modified_filepath, packet_list)
+            return {
+                'success': True,
+                'new_index': new_index,
+                'modified_filepath': modified_filepath
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def replicate_packets(self, filepath, packet_indices, count):
+        """
+        Replicate selected packets `count` times.
+        Copies are inserted immediately after the last selected packet,
+        in rounds: [round1_p0, round1_p1, ...], [round2_p0, round2_p1, ...], ...
+        Original packets are preserved unchanged.
+        Returns new_indices: flat list of indices of all newly created copies.
+        """
+        try:
+            modified_filepath = self._get_modified_filepath(filepath)
+            packets = rdpcap(modified_filepath)
+            n = len(packets)
+
+            valid_indices = sorted(set(
+                i for i in packet_indices if 0 <= i < n
+            ))
+            if not valid_indices:
+                return {'success': False, 'error': 'No valid packet indices provided'}
+
+            packet_list = list(packets)
+            insert_after = max(valid_indices)
+            selected_pkts = [packet_list[i] for i in valid_indices]
+
+            # Build all copies: `count` rounds of the full selection sequence
+            all_copies = []
+            for _round in range(count):
+                for orig in selected_pkts:
+                    dup = orig.__class__(bytes(orig))
+                    if hasattr(orig, 'time'):
+                        dup.time = orig.time
+                    all_copies.append(dup)
+
+            new_list = (
+                packet_list[:insert_after + 1]
+                + all_copies
+                + packet_list[insert_after + 1:]
+            )
+
+            new_copy_start = insert_after + 1
+            new_indices = list(range(new_copy_start, new_copy_start + len(all_copies)))
+
+            wrpcap(modified_filepath, new_list)
+            return {
+                'success': True,
+                'new_packet_count': len(new_list),
+                'copy_count': len(all_copies),
+                'new_indices': new_indices,
+                'modified_filepath': modified_filepath
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
