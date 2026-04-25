@@ -501,8 +501,9 @@ def bulk_modify_packets(filepath):
         fields = data.get('fields', {})
         packet_indices = data.get('packet_indices', None)  # None = all
         incremental = data.get('incremental', None)
+        keep_unselected = data.get('keep_unselected', True)
 
-        result = pcap_handler.bulk_modify_packets(filepath, packet_indices, fields, incremental)
+        result = pcap_handler.bulk_modify_packets(filepath, packet_indices, fields, incremental, keep_unselected)
         if result['success']:
             result['modified_filepath'] = result.get('modified_filepath', '').replace('\\', '/')
             return generate_response(result, 200, True)

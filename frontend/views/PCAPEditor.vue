@@ -233,6 +233,13 @@
                 </div>
               </div>
 
+              <div class="bulk-options-row" style="margin-top: 1rem; margin-bottom: 1rem;">
+                <label class="toggle-label">
+                  <input type="checkbox" v-model="keepUnselectedPackets" />
+                  Keep unselected packets in PCAP
+                </label>
+              </div>
+
               <div class="bulk-actions">
                 <button @click="applyBulkEdit" class="btn btn-primary" :disabled="bulkApplying">
                   {{ bulkApplying ? '⏳ Applying…' : '⚡ Apply to Selected' }}
@@ -642,6 +649,7 @@ export default {
       bulkMode: false,
       selectedPackets: [],
       bulkFields: { src_mac: '', dst_mac: '', src_ip: '', dst_ip: '', src_port: null, dst_port: null, vlan_id: null },
+      keepUnselectedPackets: true,
       bulkApplying: false,
       bulkResult: '',
       // Incremental mode
@@ -1327,7 +1335,7 @@ export default {
       try {
         const res = await this.$axios.post(
           `/pcap/bulk/${this.fileInfo.filepath}`,
-          { packet_indices: this.selectedPackets, fields, incremental }
+          { packet_indices: this.selectedPackets, fields, incremental, keep_unselected: this.keepUnselectedPackets }
         )
         if (res.data.success) {
           const d = res.data.data

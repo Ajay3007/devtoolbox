@@ -1458,7 +1458,7 @@ class PCAPHandler:
     # Bulk / Structural packet operations
     # -------------------------------------------------------------------------
 
-    def bulk_modify_packets(self, filepath, packet_indices, fields, incremental=None):
+    def bulk_modify_packets(self, filepath, packet_indices, fields, incremental=None, keep_unselected=True):
         """
         Modify selected packets in bulk.
         packet_indices: list of int indices, or None to modify all packets.
@@ -1472,6 +1472,7 @@ class PCAPHandler:
             }
             When enabled, the listed fields are incremented by step*i
             for the i-th selected packet (i=0,1,2,...)
+        keep_unselected: bool, if False, only the packets in packet_indices are kept.
         """
         import ipaddress as _ipaddr
         try:
@@ -1572,11 +1573,17 @@ class PCAPHandler:
                 except Exception as e:
                     errors.append(f'Packet {idx}: {str(e)}')
 
+            # If keep_unselected is False, filter the list to only include modified/selected indices
+            if not keep_unselected and packet_indices is not None:
+                # To maintain order, we use the original indices but only those in the packet_indices list
+                packet_list = [packet_list[i] for i in sorted(set(indices))]
+
             wrpcap(modified_filepath, packet_list)
             return {
                 'success': True,
                 'modified_count': modified_count,
                 'total_selected': len(indices),
+                'new_total_count': len(packet_list),
                 'errors': errors,
                 'modified_filepath': modified_filepath
             }
