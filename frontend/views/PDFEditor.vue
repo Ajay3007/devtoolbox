@@ -109,7 +109,8 @@
             <div v-if="ocrError" style="margin-top: 6px; font-size: 12px; color: #e74c3c">{{ ocrError }}</div>
           </div>
 
-          <div v-if="pageData && !pageLoading" class="pdf-canvas-wrapper" :style="{ opacity: isDeleted(currentPage) ? 0.3 : 1 }">
+          <div v-if="pageData && !pageLoading" class="pdf-canvas-wrapper"
+               :style="{ opacity: isDeleted(currentPage) ? 0.3 : 1, width: pageData.img_width + 'px', maxWidth: '100%' }">
             <img :src="'data:image/png;base64,' + pageData.image" class="pdf-img" />
 
             <div
@@ -130,9 +131,24 @@
         
         <div v-if="selected" class="editor-popup">
           <div style="margin-bottom: 8px; font-size: 11px; color: var(--text-dim)">
-            Edit text (font: {{ selected.font }}, size: {{ selected.size.toFixed(1) }})
+            Edit text <span v-if="selected.ocr" style="color: var(--accent-5)">(OCR)</span> — detected size: {{ selected.size.toFixed(1) }}pt
           </div>
           <textarea v-model="editText" class="edit-textarea mono" rows="3"></textarea>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px">
+            <div>
+              <div style="font-size: 10px; color: var(--text-mute); margin-bottom: 3px">Font</div>
+              <select v-model="editFont" class="edit-select">
+                <option v-for="f in FONT_OPTIONS" :key="f.value" :value="f.value">{{ f.label }}</option>
+              </select>
+            </div>
+            <div>
+              <div style="font-size: 10px; color: var(--text-mute); margin-bottom: 3px">Size (pt)</div>
+              <input v-model.number="editSize" type="number" min="4" max="72" step="0.5" class="edit-select" />
+            </div>
+          </div>
+          <div style="font-size: 10px; color: var(--text-mute); margin-top: 6px; font-style: italic">
+            Preview: <span :style="fontPreviewStyle">{{ editText || 'Sample text 123' }}</span>
+          </div>
           <div style="display: flex; gap: 8px; margin-top: 8px">
             <button @click="applyEdit('replace')" class="btn btn-primary" style="flex: 1">Replace</button>
             <button @click="applyEdit('redact')" class="btn btn-danger" style="flex: 1">Redact</button>
@@ -143,8 +159,32 @@
     </template>
 
     <div v-if="uploadError" class="error-strip">{{ uploadError }}</div>
-    <div v-if="saveResult" class="toast-strip">
-      Save complete! <button @click="downloadResult" style="background: none; border: none; color: inherit; text-decoration: underline; cursor: pointer; font-weight: bold">Download</button>
+
+    <!-- Preview Modal — shown automatically after save -->
+    <div v-if="previewOpen" class="modal-overlay" @click.self="previewOpen = false">
+      <div class="preview-modal">
+        <div class="preview-header">
+          <div style="font-size: 14px; font-weight: 600; color: var(--text)">
+            Preview — <span class="mono" style="font-size: 12px">{{ saveResult?.filename }}</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px">
+            <button @click="previewPage = Math.max(0, previewPage - 1)" :disabled="previewPage === 0" class="btn btn-ghost" style="padding: 4px 10px">◀</button>
+            <span style="font-size: 12px; color: var(--text-dim)">{{ previewPage + 1 }} / {{ previewTotalPages }}</span>
+            <button @click="previewPage = Math.min(previewTotalPages - 1, previewPage + 1)" :disabled="previewPage >= previewTotalPages - 1" class="btn btn-ghost" style="padding: 4px 10px">▶</button>
+            <button @click="downloadResult" class="btn btn-primary" style="padding: 5px 14px">
+              <IconDownload :size="13"/> Download
+            </button>
+            <button @click="previewOpen = false" class="btn btn-ghost" style="padding: 4px 10px"><IconX :size="13"/></button>
+          </div>
+        </div>
+        <div class="preview-body">
+          <div v-if="previewLoading" style="display:flex;align-items:center;justify-content:center;height:300px;color:var(--accent)">
+            Loading preview...
+          </div>
+          <img v-else-if="previewImage" :src="'data:image/png;base64,' + previewImage" style="max-width:100%;display:block;margin:0 auto;box-shadow:0 4px 20px rgba(0,0,0,0.4)" />
+          <div v-else style="text-align:center;padding:40px;color:var(--text-mute)">Preview unavailable</div>
+        </div>
+      </div>
     </div>
 
     <!-- Metadata Modal -->
@@ -197,9 +237,24 @@ export default {
       pageData:     null,   // { image, img_width, img_height, page_width, page_height, scale }
       pageLoading:  false,
       currentSpans: [],
+      FONT_OPTIONS: [
+        { label: 'Courier Bold  — thermal receipts', value: 'cobo' },
+        { label: 'Courier Regular',                  value: 'cour' },
+        { label: 'Helvetica',                        value: 'helv' },
+        { label: 'Helvetica Bold',                   value: 'helv-b' },
+        { label: 'Times Roman',                      value: 'tiro' },
+        { label: 'Times Bold',                       value: 'tibo' },
+      ],
       selected:     null,   // currently clicked span
       editText:     '',
+      editFont:     'cobo',
+      editSize:     12,
       editApplied:  '',
+      previewOpen:        false,
+      previewPage:        0,
+      previewTotalPages:  1,
+      previewImage:       null,
+      previewLoading:     false,
       allEdits:     [],     // [{page, bbox, original_text, new_text, font, size, flags, color_rgb, action}]
       deletedPages: [],
       metadataEdits:null,   // { title, author, subject, creator }
@@ -229,6 +284,27 @@ export default {
     },
     pageEdits() {
       return this.allEdits.filter(e => e.page === this.currentPage);
+    },
+    fontPreviewStyle() {
+      const mono = ['cobo', 'cour', 'coit', 'cobi'];
+      const serif = ['tiro', 'tibo', 'tiit', 'tibi'];
+      const isBold = ['cobo', 'cobi', 'helv-b', 'helv-bi', 'tibo', 'tibi'].includes(this.editFont);
+      const isItalic = ['coit', 'cobi', 'helv-o', 'helv-bi', 'tiit', 'tibi'].includes(this.editFont);
+      return {
+        fontFamily: mono.includes(this.editFont) ? 'Courier New, monospace'
+                  : serif.includes(this.editFont) ? 'Georgia, serif'
+                  : 'Helvetica, Arial, sans-serif',
+        fontWeight: isBold ? 'bold' : 'normal',
+        fontStyle:  isItalic ? 'italic' : 'normal',
+        fontSize:   '12px',
+        color:      'var(--text)',
+      };
+    },
+  },
+
+  watch: {
+    previewPage(n) {
+      if (this.previewOpen) this.fetchPreviewPage(n);
     },
   },
 
@@ -301,6 +377,7 @@ export default {
       this.saveResult = null;
       this.isScanned = false; this.ocrAvailable = false;
       this.ocrRunning = false; this.ocrError = null;
+      this.previewOpen = false; this.previewImage = null;
     },
 
     // ── Page navigation ─────────────────────────────────────────────────
@@ -354,12 +431,15 @@ export default {
 
     // ── Span helpers ────────────────────────────────────────────────────
     spanStyle(span) {
-      const s = this.pageData?.scale || 1.5;
+      // Use percentage-based positioning so spans stay aligned even when
+      // the image shrinks via CSS max-width:100%.
+      const pw = this.pageData?.page_width  || 1;
+      const ph = this.pageData?.page_height || 1;
       return {
-        left:   span.bbox[0] * s + 'px',
-        top:    span.bbox[1] * s + 'px',
-        width:  (span.bbox[2] - span.bbox[0]) * s + 'px',
-        height: (span.bbox[3] - span.bbox[1]) * s + 'px',
+        left:   (span.bbox[0] / pw * 100) + '%',
+        top:    (span.bbox[1] / ph * 100) + '%',
+        width:  ((span.bbox[2] - span.bbox[0]) / pw * 100) + '%',
+        height: ((span.bbox[3] - span.bbox[1]) / ph * 100) + '%',
       };
     },
 
@@ -379,6 +459,11 @@ export default {
              JSON.stringify(e.bbox) === JSON.stringify(span.bbox)
       );
       this.editText = existing ? existing.new_text : span.text;
+      // For OCR spans default to Courier Bold (matches thermal receipt printing).
+      // For native PDF text use the extracted font code directly.
+      const defaultFont = span.ocr ? 'cobo' : (span.font || 'cobo');
+      this.editFont = existing ? existing.font : defaultFont;
+      this.editSize = existing ? existing.size : (span.size || 12);
     },
 
     // ── Edit management ─────────────────────────────────────────────────
@@ -396,8 +481,8 @@ export default {
         bbox:          this.selected.bbox,
         original_text: this.selected.text,
         new_text:      action === 'redact' ? '' : this.editText,
-        font:          this.selected.font,
-        size:          this.selected.size,
+        font:          this.editFont,
+        size:          this.editSize,
         flags:         this.selected.flags,
         color_rgb:     this.selected.color_rgb,
       });
@@ -463,10 +548,14 @@ export default {
           output_name:   this.outputName || null,
         });
         if (res.data.success) {
-          this.saveResult = res.data.data;
-          this.allEdits   = [];
+          this.saveResult = {
+            ...res.data.data,
+            page_count: res.data.data.page_count || this.pdf.page_count,
+          };
+          this.allEdits     = [];
           this.deletedPages = [];
-          setTimeout(() => { this.saveResult = null; }, 10000);
+          await this.openPreview();
+          setTimeout(() => { this.saveResult = null; }, 30000);
         } else {
           alert('Save failed: ' + (res.data.data?.message || res.data.message || 'Unknown error'));
         }
@@ -474,6 +563,28 @@ export default {
         alert('Save error: ' + (err.response?.data?.data?.message || err.response?.data?.message || err.message));
       } finally {
         this.saving = false;
+      }
+    },
+
+    async openPreview() {
+      this.previewOpen       = true;
+      this.previewPage       = 0;
+      this.previewTotalPages = this.saveResult?.page_count || 1;
+      await this.fetchPreviewPage(0);
+    },
+
+    async fetchPreviewPage(n) {
+      this.previewLoading = true;
+      this.previewImage   = null;
+      try {
+        const res = await this.$axios.get(
+          `/pdf/${encodeURIComponent(this.saveResult.filename)}/page/${n}`
+        );
+        if (res.data.success) this.previewImage = res.data.data.image;
+      } catch (e) {
+        console.error('Preview error', e);
+      } finally {
+        this.previewLoading = false;
       }
     },
 
@@ -521,11 +632,12 @@ export default {
 .main-grid {
   flex: 1;
   display: flex;
-  overflow: hidden;
+  min-height: 0;
   position: relative;
 }
 .sidebar {
   width: 240px;
+  min-width: 240px;
   border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
@@ -536,23 +648,26 @@ export default {
 }
 .pdf-viewer-area {
   flex: 1;
+  min-width: 0;
   background: #1d2126;
-  padding: 28px;
+  padding: 24px;
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
   overflow: auto;
   position: relative;
+  gap: 16px;
 }
 .pdf-canvas-wrapper {
   position: relative;
   box-shadow: 0 20px 60px rgba(0,0,0,0.5);
   transition: opacity 0.2s;
-  /* Allow natural scaling but constrain to not be absurdly large if possible */
-  max-width: fit-content;
-  margin: 0 auto;
+  flex-shrink: 0;
 }
 .pdf-img {
   display: block;
+  max-width: 100%;
+  height: auto;
 }
 .pdf-span {
   position: absolute;
@@ -584,10 +699,10 @@ export default {
   border: 1px solid color-mix(in oklab, #e67e22 35%, transparent);
   border-radius: 6px;
   padding: 10px 14px;
-  margin: 8px;
   font-size: 12px;
   color: var(--text);
   flex-shrink: 0;
+  align-self: stretch;
 }
 .deleted-overlay {
   position: absolute;
@@ -624,6 +739,20 @@ export default {
   box-sizing: border-box;
 }
 .edit-textarea:focus {
+  border-color: var(--accent);
+}
+.edit-select {
+  width: 100%;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 5px 7px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: inherit;
+  outline: none;
+}
+.edit-select:focus {
   border-color: var(--accent);
 }
 .edit-item {
@@ -711,4 +840,29 @@ export default {
 }
 .error-strip { background: var(--accent-4); color: #fff; }
 .toast-strip { background: var(--accent); color: #0b0d10; }
+.preview-modal {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  width: min(860px, 94vw);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(0,0,0,0.6);
+}
+.preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.preview-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+  background: #1d2126;
+}
 </style>

@@ -11,6 +11,7 @@ import json
 from datetime import datetime
 from pcap_handler import PCAPHandler
 from pdf_handler import PDFHandler
+from receipt_handler import ReceiptHandler
 from utils import generate_response, allowed_file
 
 # Configuration
@@ -30,8 +31,9 @@ CORS(app)
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 # Initialize handlers
-pcap_handler = PCAPHandler(UPLOAD_FOLDER)
-pdf_handler  = PDFHandler(UPLOAD_FOLDER)
+pcap_handler     = PCAPHandler(UPLOAD_FOLDER)
+pdf_handler      = PDFHandler(UPLOAD_FOLDER)
+receipt_handler  = ReceiptHandler(UPLOAD_FOLDER)
 
 
 @app.route('/api/health', methods=['GET'])
@@ -961,6 +963,62 @@ def download_pdf(filepath):
                          download_name=os.path.basename(resolved))
     except Exception as e:
         return generate_response(str(e), 404, False)
+
+
+# =========================================================================== #
+#  Receipt Editor API
+# =========================================================================== #
+
+@app.route('/api/receipt/upload', methods=['POST'])
+def receipt_upload():
+    """Upload JPG/PNG/PDF scan, run OCR, return fields + spans."""
+    try:
+        if 'file' not in request.files:
+            return generate_response('No file provided', 400, False)
+        file = request.files['file']
+        if not file.filename:
+            return generate_response('Empty filename', 400, False)
+        ext = os.path.splitext(file.filename)[1].lower()
+        if ext not in ('.jpg', '.jpeg', '.png', '.pdf'):
+            return generate_response('Unsupported file type. Use JPG, PNG or PDF.', 400, False)
+        lang = request.form.get('lang', 'eng')
+        result = receipt_handler.upload_and_scan(file, lang=lang)
+        return generate_response(result, 200, True)
+    except Exception as e:
+        return generate_response(str(e), 500, False)
+
+
+@app.route('/api/receipt/process', methods=['POST'])
+def receipt_process():
+    """Apply edits to receipt image, return edited image + result filename."""
+    try:
+        data = request.get_json()
+        if not data:
+            return generate_response('No JSON body', 400, False)
+        filepath      = data.get('filepath')
+        edits         = data.get('edits', [])
+        output_format = data.get('output_format', 'pdf')
+        if not filepath:
+            return generate_response('filepath required', 400, False)
+        result = receipt_handler.process_edits(filepath, edits, output_format)
+        return generate_response(result, 200, True)
+    except FileNotFoundError as e:
+        return generate_response(str(e), 404, False)
+    except Exception as e:
+        return generate_response(str(e), 500, False)
+
+
+@app.route('/api/receipt/download/<path:filename>', methods=['GET'])
+def receipt_download(filename):
+    """Download the generated receipt PDF/PNG."""
+    try:
+        path = os.path.abspath(os.path.join(UPLOAD_FOLDER, os.path.basename(filename)))
+        if not os.path.exists(path):
+            return generate_response('File not found', 404, False)
+        return send_file(path, as_attachment=True,
+                         download_name=os.path.basename(path))
+    except Exception as e:
+        return generate_response(str(e), 500, False)
 
 
 if __name__ == '__main__':

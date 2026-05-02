@@ -53,20 +53,33 @@ class PDFHandler:
         is_bold   = bool(flags & 16)
         is_italic = bool(flags & 2)
         fn = font_name.lower()
-        if "courier" in fn or "mono" in fn:
-            base = "cour"
-        elif "times" in fn or "serif" in fn:
-            base = "tiro" if not is_bold else "tibo"
-            if is_italic:
-                base = "tiit" if not is_bold else "tibi"
+        if any(k in fn for k in ("courier", "mono", "typewriter", "cour", "fixed")):
+            if is_bold and is_italic:
+                base = "cobi"
+            elif is_bold:
+                base = "cobo"
+            elif is_italic:
+                base = "coit"
+            else:
+                base = "cour"
+        elif any(k in fn for k in ("times", "serif", "tiro")):
+            if is_bold and is_italic:
+                base = "tibi"
+            elif is_bold:
+                base = "tibo"
+            elif is_italic:
+                base = "tiit"
+            else:
+                base = "tiro"
         else:                               # Helvetica / sans-serif default
-            base = "helv"
             if is_bold and is_italic:
                 base = "helv-bi"
             elif is_bold:
                 base = "helv-b"
             elif is_italic:
                 base = "helv-o"
+            else:
+                base = "helv"
         return base
 
     # ------------------------------------------------------------------ #
@@ -177,7 +190,7 @@ class PDFHandler:
             }
 
         import pytesseract
-        from PIL import Image
+        from PIL import Image, ImageEnhance, ImageFilter
         self._configure_tesseract()
 
         path = self._resolve(filepath)
@@ -187,17 +200,29 @@ class PDFHandler:
                 return {"success": False, "error": "Invalid page number"}
 
             page = doc[page_num]
-            # Render at 300 DPI equivalent (scale=300/72 ≈ 4.17) for OCR accuracy
-            scale = 300 / 72
+            # Render at 400 DPI for better number/small-char recognition
+            scale = 400 / 72
             mat = fitz.Matrix(scale, scale)
             pix = page.get_pixmap(matrix=mat, alpha=False)
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
 
-            # Get word-level bounding boxes from Tesseract
+            # Preprocess: grayscale → strong contrast → sharpen → binarize
+            # Binarization removes faded stamps/watermarks that confuse Tesseract
+            img_gray = img.convert("L")
+            img_gray = ImageEnhance.Contrast(img_gray).enhance(3.0)
+            img_gray = ImageEnhance.Sharpness(img_gray).enhance(2.0)
+            # Compute adaptive threshold from image mean and binarize
+            pixels = list(img_gray.getdata())
+            mean_val = sum(pixels) / len(pixels)
+            threshold = min(mean_val * 0.9, 200)   # bias toward keeping dark text
+            img_binary = img_gray.point(lambda p: 255 if p > threshold else 0)
+
+            # PSM 6 (uniform block) works best for thermal receipt layout.
+            # OEM 3 uses both LSTM neural net and legacy engine.
             ocr_data = pytesseract.image_to_data(
-                img, lang=lang,
+                img_binary, lang=lang,
                 output_type=pytesseract.Output.DICT,
-                config="--psm 6"
+                config="--psm 6 --oem 3"
             )
 
             page_w = page.rect.width
@@ -211,7 +236,7 @@ class PDFHandler:
             for i in range(n):
                 text = ocr_data["text"][i] or ""
                 conf = int(ocr_data["conf"][i])
-                if not text.strip() or conf < 30:
+                if not text.strip() or conf < 15:
                     continue
                 # Tesseract bbox is in image pixels — convert to PDF points
                 x = ocr_data["left"][i]
@@ -223,12 +248,14 @@ class PDFHandler:
                 y0 = y * page_h / img_h
                 x1 = (x + w) * page_w / img_w
                 y1 = (y + h) * page_h / img_h
-                font_size = round(max(h * page_h / img_h * 0.72, 6), 2)
+                font_size = round(max(h * page_h / img_h, 6), 2)
                 spans.append({
                     "id":        sid,
                     "text":      text,
                     "bbox":      [round(x0, 2), round(y0, 2), round(x1, 2), round(y1, 2)],
-                    "font":      "Helvetica",
+                    # "cobo" = Courier Bold — closest match to thermal/dot-matrix receipts.
+                    # User can override per-span in the font picker.
+                    "font":      "cobo",
                     "size":      font_size,
                     "flags":     0,
                     "color_int": 0,
@@ -358,33 +385,40 @@ class PDFHandler:
                 page.apply_redactions()
 
                 # Pass 2 — insert new text into each bbox (only for 'replace' action)
+                # PyMuPDF built-in font codes that can be used directly
+                _BUILTIN_CODES = frozenset({
+                    'helv', 'helv-b', 'helv-o', 'helv-bi',
+                    'cour', 'cobo', 'coit', 'cobi',
+                    'tiro', 'tibo', 'tiit', 'tibi',
+                    'symb', 'zadb',
+                })
                 for e in page_edits:
                     action = e.get("action", "replace")
                     if action == "redact":
                         continue
-                        
+
                     rect  = fitz.Rect(e["bbox"])
                     fsize = float(e.get("size", 12))
                     color = tuple(e.get("color_rgb", [0, 0, 0]))
                     flags = int(e.get("flags", 0))
-                    fname = e.get("font", "Helvetica")
-                    builtin = self._flags_to_font(fname, flags)
+                    fname = e.get("font", "cobo")
+                    # If the frontend already sent a built-in code (e.g. "cobo"), use it directly.
+                    # Otherwise map the font name via _flags_to_font.
+                    builtin = fname if fname in _BUILTIN_CODES else self._flags_to_font(fname, flags)
 
-                    tw = fitz.TextWriter(page.rect)
                     try:
-                        font = fitz.Font(builtin)
-                        # Baseline: bottom of bbox minus small descender gap
-                        tw.append(
-                            (rect.x0, rect.y1 - fsize * 0.18),
-                            e.get("new_text", ""),
-                            font=font,
-                            fontsize=fsize,
-                        )
-                        tw.write_text(page, color=color)
-                    except Exception:
-                        # Absolute fallback
+                        # insert_text baseline = y1 minus descender clearance (~15% of fsize)
                         page.insert_text(
-                            (rect.x0, rect.y1 - 2),
+                            (rect.x0, rect.y1 - fsize * 0.15),
+                            e.get("new_text", ""),
+                            fontname=builtin,
+                            fontsize=fsize,
+                            color=color,
+                        )
+                    except Exception as ex:
+                        import sys; print(f"[pdf] insert_text failed ({builtin}): {ex}", file=sys.stderr)
+                        page.insert_text(
+                            (rect.x0, rect.y1 - fsize * 0.15),
                             e.get("new_text", ""),
                             fontsize=fsize,
                             color=color,
@@ -453,12 +487,14 @@ class PDFHandler:
                 safe = f"{base}_edited_{ts}.pdf"
 
             out_path = os.path.join(self.upload_folder, safe)
+            page_count = len(doc)
             doc.save(out_path, garbage=4, deflate=True)
             return {
                 "success":       True,
                 "filename":      safe,
                 "output_path":   out_path,
                 "edits_applied": len(edits),
+                "page_count":    page_count,
             }
         finally:
             doc.close()

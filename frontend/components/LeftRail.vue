@@ -70,7 +70,7 @@
 
 <script>
 import { IconSearch } from './icons'
-import { IconHome, IconEditor, IconGenerator, IconMerger, IconHex, IconFiles, IconPDF, IconLog, IconUseCases } from './icons'
+import { IconHome, IconEditor, IconGenerator, IconMerger, IconHex, IconFiles, IconPDF, IconLog, IconUseCases, IconReceipt } from './icons'
 
 const NAV_ITEMS = [
   { id: 'overview',   label: 'Overview',        icon: 'IconHome',      group: 'start', route: '/' },
@@ -80,13 +80,14 @@ const NAV_ITEMS = [
   { id: 'hex',        label: 'Hex Viewer',       icon: 'IconHex',       group: 'tools', route: '/hex-viewer' },
   { id: 'files',      label: 'File Manager',     icon: 'IconFiles',     group: 'tools', route: '/file-manager' },
   { id: 'pdf',        label: 'PDF Editor',       icon: 'IconPDF',       group: 'tools', route: '/pdf-editor' },
+  { id: 'receipt',    label: 'Receipt Editor',   icon: 'IconReceipt',   group: 'tools', route: '/receipt-editor' },
   { id: 'log',        label: 'Log Analyzer',     icon: 'IconLog',       group: 'tools', route: '#', badge: 'soon' },
   { id: 'usecases',   label: 'Use cases',        icon: 'IconUseCases',  group: 'learn', route: '/use-cases' },
 ]
 
 export default {
   name: 'LeftRail',
-  components: { IconSearch, IconHome, IconEditor, IconGenerator, IconMerger, IconHex, IconFiles, IconPDF, IconLog, IconUseCases },
+  components: { IconSearch, IconHome, IconEditor, IconGenerator, IconMerger, IconHex, IconFiles, IconPDF, IconLog, IconUseCases, IconReceipt },
   data() {
     return {
       groups: [

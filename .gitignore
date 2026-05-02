@@ -24,6 +24,7 @@ share/python-wheels/
 MANIFEST
 env/
 venv/
+.venv/
 ENV/
 env.bak/
 venv.bak/
