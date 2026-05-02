@@ -1,281 +1,338 @@
 <template>
-  <div class="home-container">
-    <section class="hero">
-      <h1>Welcome to DevToolBox</h1>
-      <p>Powerful tools for data plane developers and software engineers</p>
-      <div class="cta-buttons">
-        <router-link to="/pcap-editor" class="btn btn-primary">PCAP Editor</router-link>
-        <router-link to="/pcap-generator" class="btn btn-primary">PCAP Generator</router-link>
-        <router-link to="/pcap-merger" class="btn btn-primary">PCAP Merger</router-link>
-        <router-link to="/hex-viewer" class="btn btn-primary">Hex Viewer</router-link>
-        <a href="#tools" class="btn btn-secondary">Learn More</a>
+  <div class="home-view">
+    <!-- HERO -->
+    <section class="hero-section">
+      <div class="hero-content">
+        <div class="mono hero-kicker">// DEVTOOLBOX v1.0.0</div>
+        <h1 class="hero-title">
+          Inspect packets.<br/>
+          Rewrite headers.<br/>
+          <span style="color: var(--accent)">Ship.</span>
+        </h1>
+        <p class="hero-desc">
+          A browser-based suite for data-plane engineers. Generate synthetic
+          PCAPs, edit captured traffic byte-by-byte, merge sessions, and
+          x-ray any binary — all from one window, no install on the client.
+        </p>
+        <div class="hero-actions">
+          <button @click="$router.push('/pcap-editor')" class="btn-primary">
+            <IconEditor :size="14"/> Open PCAP Editor
+          </button>
+          <button @click="$router.push('/use-cases')" class="btn-ghost">
+            <IconFlow :size="14"/> See workflows
+          </button>
+          <a class="mono hero-link" href="#">
+            git clone devtoolbox.git →
+          </a>
+        </div>
+        <div class="hero-stats">
+          <div class="stat">
+            <span class="mono stat-n" style="color: var(--accent)">7</span>
+            <span class="mono stat-l">tools</span>
+          </div>
+          <div class="stat">
+            <span class="mono stat-n" style="color: var(--accent-2)">8</span>
+            <span class="mono stat-l">protocols</span>
+          </div>
+          <div class="stat">
+            <span class="mono stat-n" style="color: var(--accent-3)">∞</span>
+            <span class="mono stat-l">file size</span>
+          </div>
+          <div class="stat">
+            <span class="mono stat-n" style="color: var(--accent-5)">MIT</span>
+            <span class="mono stat-l">license</span>
+          </div>
+        </div>
+      </div>
+      <LivePacketDemo/>
+    </section>
+
+    <!-- TOOL GALLERY -->
+    <section>
+      <SectionHeading
+        kicker="— THE TOOLBELT"
+        title="Seven tools, one window."
+        desc="Each opens in its own workspace with consistent keyboard shortcuts. Pipe output between tools — generated captures open directly in the editor, modified captures drop into the hex viewer."
+      />
+      <div class="gallery-grid">
+        <button v-for="t in tools" :key="t.id" @click="$router.push(t.route)" class="tool-card">
+          <div class="tool-head">
+            <div class="tool-icon"><component :is="t.icon" :size="16"/></div>
+            <span class="tool-name">{{ t.name }}</span>
+            <Tag v-if="t.tag" fg="var(--accent)" bg="color-mix(in oklab, var(--accent) 15%, transparent)">{{ t.tag }}</Tag>
+            <IconChevR :size="14" style="margin-left: auto; color: var(--text-mute)"/>
+          </div>
+          <p class="tool-desc">{{ t.desc }}</p>
+          <div class="tool-preview">
+            <!-- Inlined Preview Components based on Tool -->
+            <template v-if="t.id === 'editor'">
+              <div class="mono" style="font-size: 10px; line-height: 1.4">
+                <div style="display: flex; gap: 6px; padding: 2px 0"><span style="color: var(--text-mute)">01</span><span style="color: var(--accent); width: 34px">TCP</span><span style="color: var(--text-dim)">SYN</span></div>
+                <div style="display: flex; gap: 6px; padding: 2px 0"><span style="color: var(--text-mute)">02</span><span style="color: var(--accent); width: 34px">TCP</span><span style="color: var(--text-dim)">SYN-ACK</span></div>
+                <div style="display: flex; gap: 6px; padding: 2px 0"><span style="color: var(--text-mute)">03</span><span style="color: var(--accent-4); width: 34px">TLS</span><span style="color: var(--text-dim)">Client Hello</span></div>
+                <div style="display: flex; gap: 6px; padding: 2px 0"><span style="color: var(--text-mute)">04</span><span style="color: var(--accent-5); width: 34px">DNS</span><span style="color: var(--text-dim)">A record</span></div>
+              </div>
+            </template>
+            <template v-if="t.id === 'generator'">
+              <div class="mono" style="font-size: 10px">
+                <div style="color: var(--text-dim)">protocol <span style="color: var(--accent-2)">tls</span></div>
+                <div style="color: var(--text-dim)">count    <span style="color: var(--accent-2)">100</span></div>
+                <div style="color: var(--text-dim)">vlan     <span style="color: var(--accent-2)">2018</span></div>
+                <div style="color: var(--accent); margin-top: 4px">▸ generating…</div>
+              </div>
+            </template>
+            <template v-if="t.id === 'merger'">
+              <div class="mono" style="font-size: 10px">
+                <div style="color: var(--text-dim)">a.pcap <span style="color: var(--text-mute)">24 pkts</span></div>
+                <div style="color: var(--text-dim)">b.pcap <span style="color: var(--text-mute)">41 pkts</span></div>
+                <div style="color: var(--text-dim)">c.pcap <span style="color: var(--text-mute)">17 pkts</span></div>
+                <div style="color: var(--accent); margin-top: 4px">→ merged 82 pkts</div>
+              </div>
+            </template>
+            <template v-if="t.id === 'hex'">
+              <div class="mono" style="font-size: 9.5px; line-height: 1.35">
+                <div><span style="color: var(--text-mute)">0000</span> <span style="color: var(--accent-2)">89 50 4e 47</span> 0d 0a 1a 0a  .PNG....</div>
+                <div><span style="color: var(--text-mute)">0008</span> 00 00 00 0d 49 48 44 52  ....IHDR</div>
+                <div><span style="color: var(--text-mute)">0010</span> 00 00 04 00 00 00 02 40  .......@</div>
+              </div>
+            </template>
+            <template v-if="t.id === 'files'">
+              <div class="mono" style="font-size: 10px">
+                <div style="color: var(--text-dim)">• capture_01.pcap</div>
+                <div style="color: var(--text-dim)">• firmware.bin</div>
+                <div style="color: var(--text-dim)">• config.json</div>
+                <div style="color: var(--text-dim)">• audit.pdf</div>
+              </div>
+            </template>
+            <template v-if="t.id === 'pdf'">
+              <div class="mono" style="font-size: 10px; color: var(--text-dim)">
+                <div>page 1 of 12</div>
+                <div style="margin-top: 4px">"Quarterly <span style="background: color-mix(in oklab, var(--accent) 25%, transparent); color: var(--accent)">audit▍</span>"</div>
+              </div>
+            </template>
+          </div>
+        </button>
       </div>
     </section>
 
-    <section id="tools" class="tools-section">
-      <h2>Available Tools</h2>
-      <div class="tools-grid">
-        <div class="tool-card">
-          <div class="tool-icon">📦</div>
-          <h3>PCAP Editor</h3>
-          <p>Create, read, and modify PCAP dumps with advanced payload editing capabilities.</p>
-          <router-link to="/pcap-editor">Get Started →</router-link>
-        </div>
-
-        <div class="tool-card">
-          <div class="tool-icon">🔧</div>
-          <h3>PCAP Generator</h3>
-          <p>Generate PCAP files with various protocols: TCP, HTTP, UDP, DNS, TLS with custom configurations.</p>
-          <router-link to="/pcap-generator">Get Started →</router-link>
-        </div>
-
-        <div class="tool-card">
-          <div class="tool-icon">🧩</div>
-          <h3>PCAP Merger</h3>
-          <p>Merge two or more PCAP/PCAPNG files into a single capture for streamlined analysis.</p>
-          <router-link to="/pcap-merger">Get Started →</router-link>
-        </div>
-
-        <div class="tool-card">
-          <div class="tool-icon">🔍</div>
-          <h3>Hex Viewer</h3>
-          <p>Advanced binary file inspection and hexadecimal analysis with search functionality.</p>
-          <router-link to="/hex-viewer">Get Started →</router-link>
-        </div>
-
-        <div class="tool-card">
-          <div class="tool-icon">📂</div>
-          <h3>File Manager</h3>
-          <p>Browse, rename, download and delete all files in the uploads folder from one place.</p>
-          <router-link to="/file-manager">Get Started →</router-link>
-        </div>
-
-        <div class="tool-card">
-          <div class="tool-icon">📄</div>
-          <h3>PDF Editor</h3>
-          <p>Click on any text in a PDF to edit it in-place while preserving font size and style.</p>
-          <router-link to="/pdf-editor">Get Started →</router-link>
-        </div>
-
-        <div class="tool-card">
-          <div class="tool-icon">📊</div>
-          <h3>Log Analyzer</h3>
-          <p>Parse and analyze logs for patterns and insights (Coming Soon)</p>
-          <a href="#" disabled>Coming Soon</a>
+    <!-- WORKFLOW -->
+    <section>
+      <SectionHeading
+        kicker="— PIPELINES"
+        title="Chain tools like Unix pipes."
+        desc="Every output opens in the next tool with one click. Three common workflows:"
+      />
+      <div style="display: flex; flex-direction: column; gap: 10px">
+        <div v-for="f in flows" :key="f.name" class="wf-row">
+          <div class="wf-name">{{ f.name }}</div>
+          <div class="wf-chain">
+            <template v-for="(s, i) in f.steps" :key="i">
+              <div class="wf-step" :style="{ borderColor: `color-mix(in oklab, ${s.c} 35%, var(--line))` }">
+                <span class="wf-pill" :style="{ background: `color-mix(in oklab, ${s.c} 15%, transparent)`, color: s.c }">{{ s.t }}</span>
+                <span class="mono" style="font-size: 11px; color: var(--text-dim)">{{ s.d }}</span>
+              </div>
+              <span v-if="i < f.steps.length - 1" style="color: var(--text-mute); font-family: var(--mono)">│</span>
+            </template>
+          </div>
         </div>
       </div>
     </section>
 
-    <section class="features-section">
-      <h2>Key Features</h2>
-      <ul class="features-list">
-        <li>🚀 Web-based interface - No installation required</li>
-        <li>⚙️ Powerful backend API for complex operations</li>
-        <li>📦 Support for PCAP and PCAPNG formats</li>
-        <li>✏️ Advanced payload modification capabilities</li>
-        <li>📊 Detailed packet and file statistics</li>
-        <li>🔄 Import/Export functionality</li>
-      </ul>
+    <!-- FEATURE GRID -->
+    <section>
+      <SectionHeading
+        kicker="— WHY IT EXISTS"
+        title="Wireshark in your browser. Scapy behind the scenes."
+      />
+      <div class="feat-grid">
+        <div v-for="ft in features" :key="ft.title" class="feat-card">
+          <div class="feat-icon"><component :is="ft.icon" :size="14"/></div>
+          <div class="feat-title">{{ ft.title }}</div>
+          <div class="feat-desc">{{ ft.desc }}</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- QUICKSTART -->
+    <section>
+      <SectionHeading
+        kicker="— QUICK START"
+        title="Running in 5 minutes."
+        desc="Python 3.8+ and Node 14+. Two terminals, four commands."
+      />
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px">
+        <CodeBlock title="Terminal 1 — backend" :lines="backendLines"/>
+        <CodeBlock title="Terminal 2 — frontend" :lines="frontendLines"/>
+      </div>
     </section>
   </div>
 </template>
 
 <script>
+import SectionHeading from '../components/SectionHeading.vue'
+import Tag from '../components/Tag.vue'
+import LivePacketDemo from '../components/LivePacketDemo.vue'
+import CodeBlock from '../components/CodeBlock.vue'
+import { IconEditor, IconGenerator, IconMerger, IconHex, IconFiles, IconPDF, IconChevR, IconFlow, IconPlay, IconCheck, IconCopy } from '../components/icons'
+
 export default {
   name: 'Home',
+  components: { SectionHeading, Tag, LivePacketDemo, CodeBlock, IconEditor, IconGenerator, IconMerger, IconHex, IconFiles, IconPDF, IconChevR, IconFlow, IconPlay, IconCheck, IconCopy },
   data() {
-    return {}
+    return {
+      tools: [
+        { id:'editor', route: '/pcap-editor', icon:'IconEditor', name:'PCAP Editor', tag:'core', desc:'Inspect & rewrite captures. Edit MACs, IPs, ports, VLAN, DNS, HTTP Host, TLS SNI with auto-checksums.' },
+        { id:'generator', route: '/pcap-generator', icon:'IconGenerator', name:'PCAP Generator', desc:'Synthesize traffic with full TCP handshakes, DNS queries, TLS handshakes. 8 protocols, auto-incrementing IPs.' },
+        { id:'merger', route: '/pcap-merger', icon:'IconMerger', name:'PCAP Merger', desc:'Combine 2+ captures into one. Preserves order and timing. Mixed PCAP/PCAPNG supported.' },
+        { id:'hex', route: '/hex-viewer', icon:'IconHex', name:'Hex Viewer', desc:'Dual-view binary inspector. Auto-detect JSON/XML/text/binary. Search hex patterns or ASCII.' },
+        { id:'files', route: '/file-manager', icon:'IconFiles', name:'File Manager', desc:'Browse everything in uploads/. Rename, delete, download, or open in any tool.' },
+        { id:'pdf', route: '/pdf-editor', icon:'IconPDF', name:'PDF Editor', desc:'Click text in a PDF to edit in place. Preserves font size and position.' },
+      ],
+      flows: [
+        { name: 'Generate → Edit → Test', steps: [
+          { t: 'PCAP Generator', d: 'synth 100 TLS flows', c: 'var(--accent-2)' },
+          { t: 'PCAP Editor',    d: 'rewrite SNI', c: 'var(--accent)' },
+          { t: 'Download',       d: 'feed into IDS', c: 'var(--accent-3)' },
+        ]},
+        { name: 'Merge → Analyze', steps: [
+          { t: 'PCAP Merger',    d: 'fuse 3 captures', c: 'var(--accent-5)' },
+          { t: 'PCAP Editor',    d: 'filter by flow', c: 'var(--accent)' },
+          { t: 'Hex Viewer',     d: 'inspect payload', c: 'var(--accent-4)' },
+        ]},
+        { name: 'Forensics', steps: [
+          { t: 'PCAP Editor',    d: 'load evidence', c: 'var(--accent)' },
+          { t: 'PCAP Generator', d: 'build comparison', c: 'var(--accent-2)' },
+          { t: 'Hex Viewer',     d: 'deep dive bytes', c: 'var(--accent-4)' },
+        ]},
+      ],
+      features: [
+        { title: 'Zero install on the client', desc: 'Runs entirely in the browser. Share a link to your teammate; they click and use it.', icon: 'IconPlay' },
+        { title: 'Powered by Scapy', desc: 'Same library Wireshark plugin authors use. Full TCP/UDP/DNS/TLS support with correct checksums.', icon: 'IconGenerator' },
+        { title: 'Built for data plane', desc: 'VLAN tags, dual-stack IPv4/v6, CIDR, protocol reverse-engineering. Not consumer-grade.', icon: 'IconEditor' },
+        { title: 'API-first', desc: '/api/* endpoints exposed. Automate from CI, scripts, or other tools.', icon: 'IconHex' },
+        { title: 'Auto-checksum', desc: 'Modify an IP, port, or payload — TCP/UDP/v4/v6 checksums recompute on save.', icon: 'IconCheck' },
+        { title: 'Inline editing', desc: 'Click any field in the packet tree to edit. No pop-up modals, no forms.', icon: 'IconCopy' },
+      ],
+      backendLines: [
+        { c: 'python -m venv .venv', out: null },
+        { c: 'source .venv/bin/activate', out: null },
+        { c: 'cd backend && pip install -r requirements.txt', out: null },
+        { c: 'python app.py', out: '✓ serving at http://localhost:5000' },
+      ],
+      frontendLines: [
+        { c: 'cd frontend', out: null },
+        { c: 'npm install', out: null },
+        { c: 'npm run dev', out: '✓ local: http://localhost:8080' },
+        { c: 'open http://localhost:8080', out: null },
+      ]
+    }
   }
 }
 </script>
 
 <style scoped>
-.home-container {
-  animation: fadeIn 0.5s ease-in;
+.home-view {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 24px 28px 60px;
+  display: flex; flex-direction: column; gap: 48px;
 }
 
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+/* HERO */
+.hero-section {
+  display: grid; grid-template-columns: 1fr 1.15fr; gap: 32px; align-items: center; margin-top: 8px;
 }
-
-.hero {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  padding: 4rem 2rem;
-  border-radius: 12px;
-  text-align: center;
-  margin-bottom: 4rem;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+.hero-kicker {
+  color: var(--accent); font-size: 11.5px; letter-spacing: 0.2em; margin-bottom: 14px;
 }
-
-.hero h1 {
-  font-size: 3rem;
-  margin-bottom: 1rem;
+.hero-title {
+  font-size: 46px; line-height: 1.05; letter-spacing: -0.03em; margin: 0; font-weight: 700;
 }
-
-.hero p {
-  font-size: 1.25rem;
-  margin-bottom: 2rem;
-  opacity: 0.95;
+.hero-desc {
+  font-size: 15.5px; color: var(--text-dim); line-height: 1.55; max-width: 480px; margin-top: 18px;
 }
-
-.cta-buttons {
-  display: flex;
-  gap: 1rem;
-  justify-content: center;
-  flex-wrap: wrap;
+.hero-actions {
+  display: flex; gap: 10px; margin-top: 22px; flex-wrap: wrap;
 }
-
-.btn {
-  padding: 0.75rem 1.5rem;
-  border-radius: 8px;
-  text-decoration: none;
-  font-weight: 600;
-  transition: all 0.3s;
-  border: none;
-  cursor: pointer;
-  font-size: 1rem;
-}
-
 .btn-primary {
-  background: white;
-  color: #667eea;
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 10px 16px; font-size: 13px; font-weight: 600;
+  background: var(--accent); color: #0b0d10;
+  border: none; border-radius: 6px;
 }
-
-.btn-primary:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+.btn-ghost {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 10px 16px; font-size: 13px; font-weight: 500;
+  background: transparent; color: var(--text);
+  border: 1px solid var(--line-2); border-radius: 6px;
 }
-
-.btn-secondary {
-  background: rgba(255, 255, 255, 0.2);
-  color: white;
-  border: 2px solid white;
+.hero-link {
+  font-size: 12px; color: var(--text-dim); text-decoration: none; padding: 10px 4px;
 }
-
-.btn-secondary:hover {
-  background: rgba(255, 255, 255, 0.3);
+.hero-stats {
+  display: flex; gap: 18px; margin-top: 28px; flex-wrap: wrap;
 }
+.stat { display: flex; flex-direction: column; }
+.stat-n { font-size: 22px; letter-spacing: -0.02em; font-weight: 600; }
+.stat-l { font-size: 10.5px; color: var(--text-mute); letter-spacing: 0.1em; }
 
-.tools-section {
-  margin-bottom: 4rem;
-}
-
-.tools-section h2,
-.features-section h2 {
-  font-size: 2rem;
-  margin-bottom: 2rem;
-  color: #333;
-  text-align: center;
-}
-
-.tools-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 2rem;
-  margin-bottom: 2rem;
-}
-
+/* GALLERY */
+.gallery-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 .tool-card {
-  background: white;
-  padding: 2rem;
-  border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  text-align: center;
-  transition: all 0.3s;
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 8px; padding: 16px; text-align: left;
+  display: flex; flex-direction: column; gap: 10px;
+  color: var(--text); transition: border-color 0.15s, transform 0.15s;
+  cursor: pointer;
+  font-family: inherit;
 }
-
-.tool-card:hover {
-  transform: translateY(-8px);
-  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.15);
-}
-
+.tool-card:hover { border-color: color-mix(in oklab, var(--accent) 30%, var(--line)); }
+.tool-head { display: flex; align-items: center; gap: 8px; }
 .tool-icon {
-  font-size: 3rem;
-  margin-bottom: 1rem;
+  width: 28px; height: 28px; border-radius: 6px;
+  background: var(--panel-3); border: 1px solid var(--line);
+  display: grid; place-items: center; color: var(--accent);
+}
+.tool-name { font-weight: 600; font-size: 14px; }
+.tool-desc { font-size: 12.5px; color: var(--text-dim); line-height: 1.5; margin: 0; min-height: 56px; }
+.tool-preview {
+  background: var(--bg); border: 1px solid var(--line);
+  border-radius: 5px; padding: 10px; min-height: 70px;
 }
 
-.tool-card h3 {
-  font-size: 1.5rem;
-  margin-bottom: 1rem;
-  color: #667eea;
+/* FLOWS */
+.wf-row {
+  display: flex; align-items: center; gap: 16px;
+  padding: 14px 16px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+}
+.wf-name {
+  font-size: 12px; color: var(--text-dim); font-family: var(--mono);
+  width: 180px; letter-spacing: 0.03em;
+}
+.wf-chain { display: flex; align-items: center; gap: 10px; flex: 1; flex-wrap: wrap; }
+.wf-step {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 10px; border: 1px solid var(--line); border-radius: 5px;
+  background: var(--panel-2);
+}
+.wf-pill {
+  font-size: 11px; padding: 2px 7px; border-radius: 3px;
+  font-family: var(--mono); font-weight: 500;
 }
 
-.tool-card p {
-  color: #666;
-  margin-bottom: 1.5rem;
-  line-height: 1.6;
+/* FEATURES */
+.feat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.feat-card {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 6px; padding: 14px;
 }
-
-.tool-card a {
-  display: inline-block;
-  padding: 0.5rem 1rem;
-  background: #667eea;
-  color: white;
-  text-decoration: none;
-  border-radius: 6px;
-  transition: all 0.3s;
+.feat-icon {
+  width: 26px; height: 26px; border-radius: 5px;
+  background: color-mix(in oklab, var(--accent) 12%, transparent);
+  color: var(--accent);
+  display: grid; place-items: center; margin-bottom: 10px;
 }
-
-.tool-card a:hover:not([disabled]) {
-  background: #764ba2;
-  transform: translateX(4px);
-}
-
-.tool-card a[disabled] {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.features-section {
-  background: white;
-  padding: 2rem;
-  border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-}
-
-.features-list {
-  list-style: none;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: 1.5rem;
-}
-
-.features-list li {
-  padding: 1rem;
-  background: #f8f9fa;
-  border-radius: 8px;
-  line-height: 1.6;
-  color: #333;
-  font-size: 1.05rem;
-}
-
-@media (max-width: 768px) {
-  .hero {
-    padding: 2rem 1rem;
-  }
-
-  .hero h1 {
-    font-size: 2rem;
-  }
-
-  .hero p {
-    font-size: 1rem;
-  }
-
-  .cta-buttons {
-    flex-direction: column;
-  }
-
-  .btn {
-    width: 100%;
-  }
-}
+.feat-title { font-weight: 600; font-size: 13.5px; margin-bottom: 4px; }
+.feat-desc { font-size: 12.5px; color: var(--text-dim); line-height: 1.5; }
 </style>

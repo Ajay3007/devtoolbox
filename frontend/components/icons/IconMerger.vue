@@ -1,0 +1,2 @@
+<template><svg :width="size" :height="size" viewBox="0 0 20 20" fill="none" stroke="currentColor" :stroke-width="sw" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5l4 4v2l-4 4"/><path d="M17 5l-4 4v2l4 4"/><circle cx="10" cy="10" r="1.4"/></svg></template>
+<script>export default { name: 'IconMerger', props: { size: { type: [Number,String], default: 18 }, sw: { type: [Number,String], default: 1.5 } } }</script>

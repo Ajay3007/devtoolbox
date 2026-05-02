@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -r 'this.$axios\\\\|axios\\\\.' /c/Users/Ajay.Gupt/Downloads/csp/projects/devtoolbox/frontend/views/ '--include=*.vue')",
+      "Bash(grep -E '$axios\\\\.\\(get|post|put|delete\\)' /c/Users/Ajay.Gupt/Downloads/csp/projects/devtoolbox/frontend/views/PCAPGenerator.vue)",
+      "Bash(grep '$axios' /c/Users/Ajay.Gupt/Downloads/csp/projects/devtoolbox/frontend/views/PCAPGenerator.vue)",
+      "Bash(grep -n 'this.$axios' /c/Users/Ajay.Gupt/Downloads/csp/projects/devtoolbox/frontend/views/PCAPEditor.vue)",
+      "Bash(python -c \"from scapy.layers.dns import *; import scapy.layers.dns as d; print\\([x for x in dir\\(d\\) if 'MX' in x or 'RR' in x.upper\\(\\)]\\)\")",
+      "Bash(python -c \"from scapy.layers.dns import DNSRRMX; print\\(DNSRRMX.fields_desc\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(python -c \"import pytesseract; print\\('pytesseract OK'\\)\")",
+      "Bash(python -c \"import easyocr; print\\('easyocr OK'\\)\")",
+      "Bash(tesseract --version)",
+      "Bash(pip install *)",
+      "Bash(python -c \"import pytesseract; print\\('OK'\\)\")",
+      "Bash(where pip *)",
+      "Bash(pip --version)",
+      "Bash(py -m pip install pytesseract pillow)",
+      "Bash(where tesseract *)",
+      "Bash(powershell -Command \"Get-Command tesseract -ErrorAction SilentlyContinue\")",
+      "Read(//c/Program Files/**)"
+    ]
+  }
+}

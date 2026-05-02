@@ -6,6 +6,7 @@ import PCAPMerger from '../views/PCAPMerger.vue'
 import HexViewer from '../views/HexViewer.vue'
 import FileManager from '../views/FileManager.vue'
 import PDFEditor from '../views/PDFEditor.vue'
+import UseCases from '../views/UseCases.vue'
 
 const routes = [
   {
@@ -42,6 +43,11 @@ const routes = [
     path: '/pdf-editor',
     name: 'pdf-editor',
     component: PDFEditor
+  },
+  {
+    path: '/use-cases',
+    name: 'use-cases',
+    component: UseCases
   }
 ]
 

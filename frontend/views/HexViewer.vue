@@ -1,182 +1,133 @@
 <template>
-  <div class="hex-viewer-container">
-    <h1>Hex Viewer</h1>
-    <p class="subtitle">View and analyze binary files in hexadecimal format</p>
-
-    <!-- Upload Section -->
-    <section v-if="!fileData" class="upload-section">
-      <div class="upload-box" @dragover.prevent @drop.prevent="handleFileDrop">
-        <input
-          type="file"
-          ref="fileInput"
-          @change="handleFileUpload"
-          style="display: none"
-        />
-        <div @click="$refs.fileInput.click()" class="upload-content">
-          <div class="upload-icon">🔍</div>
-          <h3>Upload Binary File</h3>
-          <p>Drag and drop or click to browse</p>
-          <p class="file-formats">All file types supported</p>
-        </div>
-      </div>
-
-      <div v-if="uploadProgress" class="progress-section">
-        <div class="progress-bar">
-          <div class="progress-fill" :style="{ width: uploadProgress + '%' }"></div>
-        </div>
-        <p>{{ uploadProgress }}% uploaded</p>
-      </div>
-    </section>
-
-    <!-- Hex Display Section -->
-    <section v-if="fileData" class="hex-display-section">
-      <div class="file-info">
-        <div class="info-row">
-          <strong>File:</strong> {{ fileData.filename }}
-          <button @click="closeFile" class="btn-close">✕ Close</button>
-        </div>
-        <div class="info-row">
-          <strong>Size:</strong> {{ formatBytes(fileData.size) }} ({{ fileData.size }} bytes)
-        </div>
-        <div class="info-row">
-          <strong>Type:</strong> 
-          <span class="badge" :class="'badge-' + fileData.file_type">
-            {{ fileData.file_type.toUpperCase() }}
-          </span>
-          <span v-if="fileData.encoding" class="encoding-info">
-            ({{ fileData.encoding }})
-          </span>
-        </div>
-        <div v-if="!viewMode && fileData.text" class="info-row">
-          <strong>Showing:</strong> Bytes {{ currentOffset }} - {{ Math.min(currentOffset + bytesPerPage, fileData.size) }}
-        </div>
-      </div>
-
-      <!-- View Mode Toggle -->
-      <div v-if="fileData.text" class="view-toggle">
-        <button 
-          @click="viewMode = 'text'" 
-          :class="['toggle-btn', { active: viewMode === 'text' }]"
-        >
-          📄 Text View
+  <div class="hex-page" @dragover.prevent @drop.prevent="handleFileDrop">
+    <!-- Hidden file input -->
+    <input type="file" ref="fileInput" @change="handleFileUpload" style="display: none" />
+    
+    <ViewHeader
+      :icon="IconHex"
+      title="Hex Viewer"
+      subtitle="Inspect any binary. Auto-detects JSON, XML, text, and binary."
+    >
+      <template #actions v-if="!fileData">
+        <button class="btn btn-primary" @click="$refs.fileInput.click()">
+          <IconUpload :size="13"/> Upload File
         </button>
-        <button 
-          @click="viewMode = 'hex'" 
-          :class="['toggle-btn', { active: viewMode === 'hex' }]"
-        >
-          🔢 Hex View
-        </button>
-      </div>
+      </template>
+    </ViewHeader>
 
-      <!-- Text View -->
-      <div v-if="viewMode === 'text' && fileData.text" class="text-view">
-        <div class="text-header">
-          <span>Human-Readable Content</span>
-          <button @click="copyToClipboard" class="btn btn-secondary btn-sm">📋 Copy</button>
-        </div>
-        <pre class="text-content" :class="'format-' + fileData.file_type">{{ fileData.text }}</pre>
-      </div>
-
-      <!-- Search -->
-      <div v-if="viewMode === 'hex'" class="search-section">
-        <input
-          v-model="searchQuery"
-          type="text"
-          placeholder="Search hex (e.g., 4D5A or MZ)"
-          class="search-input"
-          @keyup.enter="searchHex"
-        />
-        <button @click="searchHex" class="btn btn-primary">🔍 Search</button>
-        <button v-if="searchResults.length" @click="clearSearch" class="btn btn-secondary">Clear</button>
-      </div>
-
-      <div v-if="searchResults.length" class="search-results">
-        Found {{ searchResults.length }} match(es) at offset(s): 
-        <span 
-          v-for="(offset, idx) in searchResults" 
-          :key="idx"
-          class="search-result-link"
-          @click="goToOffset(offset)"
-        >
-          0x{{ offset.toString(16).toUpperCase().padStart(8, '0') }}
-        </span>
-      </div>
-
-      <!-- Hex Grid -->
-      <div v-if="viewMode === 'hex'" class="hex-grid-container">
-        <div class="hex-grid">
-          <div class="hex-header">
-            <div class="offset-column">Offset</div>
-            <div class="hex-columns">
-              <span v-for="i in 16" :key="i" class="hex-header-col">
-                {{ (i - 1).toString(16).toUpperCase() }}
-              </span>
-            </div>
-            <div class="ascii-column">ASCII</div>
+    <template v-if="!fileData">
+      <div style="padding: 28px">
+        <div class="drop-zone" @click="$refs.fileInput.click()">
+          <IconUpload :size="32" style="color: var(--accent); margin-bottom: 12px" />
+          <div style="font-size: 14px; font-weight: 500; margin-bottom: 4px; color: var(--text)">Drop a file here to view its hex dump</div>
+          <div style="font-size: 12px; color: var(--text-dim)">Or click to browse</div>
+          
+          <div v-if="uploadProgress" style="margin-top: 14px; color: var(--accent); font-size: 12px">
+            Loading... {{ uploadProgress }}%
           </div>
+        </div>
+      </div>
+    </template>
+    
+    <template v-else>
+      <div class="file-bar">
+        <div style="display: flex; align-items: center; gap: 10px; min-width: 0">
+          <IconFiles :size="14" style="color: var(--accent-2)" />
+          <span class="mono" style="font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{ fileData.filename }}</span>
+          <Tag fg="var(--text-dim)">{{ formatBytes(fileData.size) }}</Tag>
+          <Tag fg="var(--accent-2)" bg="color-mix(in oklab, var(--accent-2) 15%, transparent)">{{ fileData.type || 'BINARY' }}</Tag>
+          <Tag fg="var(--text-dim)">offset {{ formatOffset(currentOffset) }}</Tag>
+        </div>
+        <div style="display: flex; gap: 4px">
+          <button @click="viewMode = 'text'" class="toggle-btn" :class="{ active: viewMode === 'text' }" :disabled="!fileData.text">Text</button>
+          <button @click="viewMode = 'hex'" class="toggle-btn" :class="{ active: viewMode === 'hex' }">Hex</button>
+          <button @click="viewMode = 'split'" class="toggle-btn" :class="{ active: viewMode === 'split' }" :disabled="!fileData.text">Split</button>
+          <button @click="closeFile" class="toggle-btn" style="margin-left: 8px">Close</button>
+        </div>
+      </div>
 
-          <div v-for="(row, idx) in displayRows" :key="idx" class="hex-row">
-            <div class="offset-cell">{{ formatOffset(row.offset) }}</div>
-            <div class="hex-bytes">
-              <span 
-                v-for="(byte, byteIdx) in row.bytes" 
-                :key="byteIdx"
-                class="hex-byte"
-                :class="{ 
-                  'highlight': isHighlighted(row.offset + byteIdx),
-                  'null-byte': byte === '00'
-                }"
-                @click="selectByte(row.offset + byteIdx)"
-              >
-                {{ byte }}
-              </span>
+      <div class="toolbar">
+        <div class="search-box">
+          <IconSearch :size="13" style="color: var(--text-mute)" />
+          <input
+            placeholder="search ascii or 0xDE AD BE EF"
+            v-model="searchQuery"
+            @keyup.enter="searchHex"
+            class="mono search-input"
+          />
+          <button v-if="searchQuery" @click="clearSearch" style="background: none; border: none; color: var(--text-mute); cursor: pointer"><IconX :size="12"/></button>
+          <span v-if="searchResults.length > 0" class="mono" style="font-size: 11px; color: var(--accent)">{{ searchResults.length }} hits</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px">
+          <button @click="prevPage" class="pag-btn" :disabled="currentPage <= 1">◀</button>
+          <span class="mono" style="font-size: 11.5px; color: var(--text-dim)">
+            page {{ currentPage }} / {{ totalPages }}
+          </span>
+          <button @click="nextPage" class="pag-btn" :disabled="currentPage >= totalPages">▶</button>
+          <div style="width: 1px; height: 18px; background: var(--line); margin: 0 4px"></div>
+          <button @click="copyToClipboard" class="btn btn-ghost" style="padding: 5px 10px" :disabled="!fileData.text"><IconCopy :size="12"/> Copy</button>
+          <button @click="viewMode === 'text' ? downloadTextContent() : downloadAsText()" class="btn btn-ghost" style="padding: 5px 10px"><IconDownload :size="12"/> Export</button>
+        </div>
+      </div>
+
+      <div class="view-area">
+        <div v-if="viewMode === 'hex' || viewMode === 'split'" class="hex-pane">
+          <div class="hex-dump mono">
+            <div class="hex-head">
+              <span style="width: 65px">offset</span>
+              <span style="flex: 1">00 01 02 03  04 05 06 07  08 09 0a 0b  0c 0d 0e 0f</span>
+              <span style="width: 130px; text-align: right">ascii</span>
             </div>
-            <div class="ascii-bytes">
-              <span 
-                v-for="(char, charIdx) in row.ascii" 
-                :key="charIdx"
-                class="ascii-char"
-                :class="{ 'highlight': isHighlighted(row.offset + charIdx) }"
-              >
-                {{ char }}
+            
+            <div v-for="(row, i) in displayRows" :key="i" class="hex-row">
+              <span class="hex-offset">{{ formatOffset(row.offset).replace('0x', '') }}</span>
+              <span class="hex-bytes">
+                <span 
+                  v-for="(b, j) in row.bytes" 
+                  :key="j"
+                  :class="{ 
+                    highlight: isHighlighted(row.offset + j),
+                    printable: b !== '  ' && parseInt(b, 16) >= 32 && parseInt(b, 16) <= 126
+                  }"
+                  @click="selectByte(row.offset + j)"
+                >
+                  {{ b }}{{ j === 3 || j === 7 || j === 11 ? '  ' : ' ' }}
+                </span>
+              </span>
+              <span class="hex-ascii">
+                <span 
+                  v-for="(char, j) in row.ascii" 
+                  :key="j"
+                  :class="{ 
+                    highlight: isHighlighted(row.offset + j),
+                    printable: char !== '.' && char !== ' '
+                  }"
+                  @click="selectByte(row.offset + j)"
+                >{{ char }}</span>
               </span>
             </div>
           </div>
         </div>
+        
+        <div v-if="(viewMode === 'text' || viewMode === 'split') && fileData.text" class="text-pane">
+          <pre class="text-content mono">{{ fileData.text }}</pre>
+        </div>
       </div>
-
-      <!-- Pagination -->
-      <div v-if="viewMode === 'hex'" class="pagination">
-        <button @click="prevPage" :disabled="currentOffset === 0" class="btn btn-secondary">
-          ← Previous
-        </button>
-        <span class="page-info">
-          Page {{ currentPage }} of {{ totalPages }}
-        </span>
-        <button @click="nextPage" :disabled="currentOffset + bytesPerPage >= fileData.size" class="btn btn-secondary">
-          Next →
-        </button>
-      </div>
-
-      <!-- Actions -->
-      <div class="actions">
-        <button v-if="viewMode === 'hex'" @click="downloadAsText" class="btn btn-info">📄 Export Hex as Text</button>
-        <button v-if="viewMode === 'text'" @click="downloadTextContent" class="btn btn-info">💾 Download Text</button>
-      </div>
-    </section>
-
-    <!-- Error Display -->
-    <div v-if="error" class="error-message">
-      <h3>❌ Error</h3>
-      <p>{{ error }}</p>
-    </div>
+    </template>
+    
+    <div v-if="error" class="error-strip">{{ error }}</div>
   </div>
 </template>
-
 <script>
 import axios from 'axios';
 
+
+import ViewHeader from '../components/ViewHeader.vue'
+import Tag from '../components/Tag.vue'
+import { IconHex, IconUpload, IconFiles, IconSearch, IconX, IconCopy, IconDownload } from '../components/icons'
+
 export default {
+  components: { ViewHeader, Tag, IconHex, IconUpload, IconFiles, IconSearch, IconX, IconCopy, IconDownload },
   name: 'HexViewer',
   data() {
     return {
@@ -270,10 +221,10 @@ export default {
           // Default to text view if text content is available
           this.viewMode = response.data.text ? 'text' : 'hex';
         } else {
-          this.error = response.data.message || 'Failed to load file';
+          this.error = response.data.data?.message || response.data.message || 'Failed to load file';
         }
       } catch (err) {
-        this.error = err.response?.data?.message || err.message || 'Failed to upload file';
+        this.error = err.response?.data?.data?.message || err.response?.data?.message || err.message || 'Failed to upload file';
       } finally {
         this.uploadProgress = 0;
       }
@@ -411,381 +362,212 @@ export default {
   }
 };
 </script>
-
 <style scoped>
-.hex-viewer-container {
-  max-width: 1400px;
-  margin: 0 auto;
-}
-
-.subtitle {
-  color: #666;
-  margin-bottom: 2rem;
-}
-
-.upload-section {
-  margin-bottom: 2rem;
-}
-
-.upload-box {
-  border: 3px dashed #667eea;
-  border-radius: 12px;
-  padding: 3rem;
-  text-align: center;
-  cursor: pointer;
-  transition: all 0.3s;
-  background: #f8f9ff;
-}
-
-.upload-box:hover {
-  background: #e8e9ff;
-  border-color: #764ba2;
-}
-
-.upload-icon {
-  font-size: 4rem;
-  margin-bottom: 1rem;
-}
-
-.file-formats {
-  color: #999;
-  font-size: 0.9rem;
-}
-
-.progress-section {
-  margin-top: 1rem;
-}
-
-.progress-bar {
-  height: 8px;
-  background: #eee;
-  border-radius: 4px;
-  overflow: hidden;
-}
-
-.progress-fill {
+.hex-page {
+  display: flex;
+  flex-direction: column;
   height: 100%;
-  background: linear-gradient(90deg, #667eea, #764ba2);
-  transition: width 0.3s;
 }
-
-.file-info {
-  background: #f8f9ff;
-  padding: 1rem;
+.drop-zone {
+  border: 2px dashed var(--accent);
   border-radius: 8px;
-  margin-bottom: 1rem;
-  border: 2px solid #667eea;
+  padding: 40px;
+  text-align: center;
+  background: color-mix(in oklab, var(--accent) 5%, transparent);
+  cursor: pointer;
+  transition: all 0.2s;
 }
-
-.info-row {
-  margin: 0.5rem 0;
+.drop-zone:hover {
+  background: color-mix(in oklab, var(--accent) 10%, transparent);
+}
+.file-bar {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  padding: 10px 28px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
 }
-
-.btn-close {
-  background: #e74c3c;
-  color: white;
-  border: none;
-  padding: 0.4rem 0.8rem;
-  border-radius: 6px;
+.toggle-btn {
+  padding: 5px 12px;
+  font-size: 11.5px;
+  font-family: var(--mono);
+  background: var(--panel-2);
+  color: var(--text-dim);
+  border: 1px solid var(--line);
+  border-radius: 3px;
   cursor: pointer;
-  font-weight: 600;
 }
-
-.search-section {
+.toggle-btn.active {
+  background: color-mix(in oklab, var(--accent) 12%, transparent);
+  color: var(--accent);
+  border-color: color-mix(in oklab, var(--accent) 30%, transparent);
+}
+.toggle-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.toolbar {
   display: flex;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 28px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
 }
-
+.search-box {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  width: 340px;
+}
 .search-input {
   flex: 1;
-  padding: 0.6rem;
-  border: 2px solid #667eea;
-  border-radius: 6px;
-  font-family: 'Courier New', monospace;
-}
-
-.search-results {
-  background: #e9f8ef;
-  padding: 0.75rem;
-  border-radius: 6px;
-  margin-bottom: 1rem;
-  border: 1px solid #27ae60;
-}
-
-.search-result-link {
-  display: inline-block;
-  margin: 0 0.5rem;
-  color: #667eea;
-  cursor: pointer;
-  font-weight: 600;
-}
-
-.search-result-link:hover {
-  text-decoration: underline;
-}
-
-.hex-grid-container {
-  background: white;
-  border: 2px solid #667eea;
-  border-radius: 8px;
-  padding: 1rem;
-  margin-bottom: 1rem;
-  overflow-x: auto;
-}
-
-.hex-grid {
-  font-family: 'Courier New', monospace;
-  font-size: 0.9rem;
-}
-
-.hex-header {
-  display: grid;
-  grid-template-columns: 120px 1fr 180px;
-  gap: 1rem;
-  padding: 0.5rem 0;
-  border-bottom: 2px solid #667eea;
-  font-weight: 700;
-  color: #667eea;
-  margin-bottom: 0.5rem;
-}
-
-.hex-columns {
-  display: grid;
-  grid-template-columns: repeat(16, 1fr);
-  gap: 0.25rem;
-  text-align: center;
-}
-
-.hex-row {
-  display: grid;
-  grid-template-columns: 120px 1fr 180px;
-  gap: 1rem;
-  padding: 0.25rem 0;
-  border-bottom: 1px solid #eee;
-}
-
-.hex-row:hover {
-  background: #f8f9ff;
-}
-
-.offset-cell {
-  color: #667eea;
-  font-weight: 600;
-}
-
-.hex-bytes {
-  display: grid;
-  grid-template-columns: repeat(16, 1fr);
-  gap: 0.25rem;
-  text-align: center;
-}
-
-.hex-byte {
-  padding: 0.1rem;
-  cursor: pointer;
-  border-radius: 2px;
-}
-
-.hex-byte:hover {
-  background: #764ba2;
-  color: white;
-}
-
-.hex-byte.highlight {
-  background: #f39c12;
-  color: white;
-  font-weight: 700;
-}
-
-.hex-byte.null-byte {
-  color: #bbb;
-}
-
-.ascii-bytes {
-  display: grid;
-  grid-template-columns: repeat(16, 1fr);
-  text-align: center;
-  color: #555;
-}
-
-.ascii-char.highlight {
-  background: #f39c12;
-  color: white;
-  font-weight: 700;
-}
-
-.pagination {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 1rem;
-  margin: 1rem 0;
-}
-
-.page-info {
-  font-weight: 600;
-  color: #667eea;
-}
-
-.actions {
-  display: flex;
-  gap: 0.75rem;
-  justify-content: center;
-  margin-top: 1rem;
-}
-
-.btn {
-  padding: 0.75rem 1.25rem;
+  background: transparent;
   border: none;
-  border-radius: 8px;
+  outline: none;
+  color: var(--text);
+  font-size: 12px;
+}
+.pag-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  font-size: 10px;
+  background: var(--panel-2);
+  color: var(--text-dim);
+  border: 1px solid var(--line);
+  border-radius: 3px;
   cursor: pointer;
+}
+.pag-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.view-area {
+  flex: 1;
+  overflow: auto;
+  padding: 18px 28px 28px;
+  display: grid;
+  gap: 14px;
+}
+.view-area:has(> .hex-pane:first-child:nth-last-child(2)) {
+  grid-template-columns: 1fr 1fr;
+}
+.hex-pane, .text-pane {
+  min-width: 0;
+}
+.hex-dump {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 14px;
+  font-size: 12px;
+  line-height: 1.75;
+}
+.hex-head {
+  display: flex;
+  gap: 14px;
+  color: var(--text-mute);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 6px;
+  margin-bottom: 8px;
+}
+.hex-row {
+  display: flex;
+  gap: 14px;
+}
+.hex-offset {
+  width: 65px;
+  color: var(--text-mute);
+}
+.hex-bytes {
+  flex: 1;
+}
+.hex-bytes span, .hex-ascii span {
+  color: var(--text-dim);
+  border-radius: 2px;
+  cursor: pointer;
+}
+.hex-bytes span.printable {
+  color: var(--accent-2);
+}
+.hex-ascii span.printable {
+  color: var(--text);
+}
+.hex-bytes span.highlight, .hex-ascii span.highlight {
+  color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 20%, transparent);
+}
+.hex-ascii {
+  width: 130px;
+  text-align: right;
+  letter-spacing: 2px;
+}
+.text-content {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 14px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--text-dim);
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  height: 100%;
+  box-sizing: border-box;
+}
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
   font-weight: 600;
-  color: white;
-  transition: all 0.3s;
+  border-radius: 5px;
+  cursor: pointer;
+  border: none;
+  font-family: inherit;
 }
-
 .btn-primary {
-  background: #667eea;
+  background: var(--accent);
+  color: #0b0d10;
 }
-
-.btn-secondary {
-  background: #95a5a6;
+.btn-primary:hover {
+  filter: brightness(1.1);
 }
-
-.btn-info {
-  background: #16a085;
+.btn-ghost {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line-2);
 }
-
-.btn:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+.btn-ghost:hover:not(:disabled) {
+  background: var(--panel-3);
 }
-
 .btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
-
-.error-message {
-  background: #fdecea;
-  border: 2px solid #e74c3c;
-  color: #c0392b;
-  padding: 1rem;
-  border-radius: 8px;
-  margin-top: 1rem;
-}
-
-.view-toggle {
-  display: flex;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
-  justify-content: center;
-}
-
-.toggle-btn {
-  padding: 0.75rem 1.5rem;
-  border: 2px solid #667eea;
-  background: white;
-  color: #667eea;
-  border-radius: 8px;
-  cursor: pointer;
-  font-weight: 600;
-  transition: all 0.3s;
-}
-
-.toggle-btn.active {
-  background: #667eea;
-  color: white;
-}
-
-.toggle-btn:hover:not(.active) {
-  background: #f8f9ff;
-}
-
-.text-view {
-  background: white;
-  border: 2px solid #667eea;
-  border-radius: 8px;
-  margin-bottom: 1rem;
-  overflow: hidden;
-}
-
-.text-header {
-  background: #667eea;
-  color: white;
-  padding: 0.75rem 1rem;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-weight: 600;
-}
-
-.text-content {
-  padding: 1.5rem;
-  margin: 0;
-  font-family: 'Courier New', monospace;
-  font-size: 0.9rem;
-  line-height: 1.6;
-  max-height: 600px;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  background: #f8f9fa;
-}
-
-.text-content.format-json {
-  color: #27ae60;
-}
-
-.text-content.format-xml {
-  color: #e67e22;
-}
-
-.text-content.format-text {
-  color: #2c3e50;
-}
-
-.badge {
-  display: inline-block;
-  padding: 0.25rem 0.75rem;
-  border-radius: 12px;
-  font-size: 0.75rem;
-  font-weight: 700;
-  text-transform: uppercase;
-}
-
-.badge-text {
-  background: #3498db;
-  color: white;
-}
-
-.badge-json {
-  background: #27ae60;
-  color: white;
-}
-
-.badge-xml {
-  background: #e67e22;
-  color: white;
-}
-
-.badge-binary {
-  background: #95a5a6;
-  color: white;
-}
-
-.encoding-info {
-  font-size: 0.85rem;
-  color: #7f8c8d;
-  margin-left: 0.5rem;
-}
-
-.btn-sm {
-  padding: 0.4rem 0.8rem;
-  font-size: 0.85rem;
+.error-strip {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--accent-3);
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 5px;
+  font-size: 13px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  z-index: 1000;
 }
 </style>

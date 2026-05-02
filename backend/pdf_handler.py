@@ -115,6 +115,139 @@ class PDFHandler:
         finally:
             doc.close()
 
+    # Common install locations on Windows when not on PATH
+    _TESSERACT_SEARCH_PATHS = [
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+        r"C:\Users\{user}\AppData\Local\Programs\Tesseract-OCR\tesseract.exe",
+    ]
+
+    @staticmethod
+    def _configure_tesseract():
+        """Auto-detect the Tesseract binary and tell pytesseract where it is."""
+        try:
+            import pytesseract, os, shutil
+            # Already on PATH — nothing to do
+            if shutil.which("tesseract"):
+                return True
+            # Try common Windows install locations
+            user = os.environ.get("USERNAME", os.environ.get("USER", ""))
+            candidates = [
+                r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+                r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+                os.path.join(os.environ.get("LOCALAPPDATA", ""),
+                             r"Programs\Tesseract-OCR\tesseract.exe"),
+                os.path.join(os.environ.get("APPDATA", ""),
+                             r"Programs\Tesseract-OCR\tesseract.exe"),
+            ]
+            for path in candidates:
+                if os.path.isfile(path):
+                    pytesseract.pytesseract.tesseract_cmd = path
+                    return True
+            return False
+        except ImportError:
+            return False
+
+    @staticmethod
+    def _tesseract_available():
+        """Return True if pytesseract + tesseract binary are both reachable."""
+        try:
+            import pytesseract
+            PDFHandler._configure_tesseract()
+            pytesseract.get_tesseract_version()
+            return True
+        except Exception:
+            return False
+
+    def ocr_page(self, filepath, page_num, lang="eng"):
+        """
+        Run Tesseract OCR on one page and return spans in the same format
+        as get_text_blocks(). Requires Tesseract to be installed.
+        lang: tesseract language code(s), e.g. 'eng', 'eng+hin'
+        """
+        self._check_fitz()
+        if not self._tesseract_available():
+            return {
+                "success": False,
+                "error": (
+                    "Tesseract OCR is not installed. "
+                    "Download from https://github.com/UB-Mannheim/tesseract/wiki "
+                    "then restart the server."
+                )
+            }
+
+        import pytesseract
+        from PIL import Image
+        self._configure_tesseract()
+
+        path = self._resolve(filepath)
+        doc = fitz.open(path)
+        try:
+            if page_num < 0 or page_num >= len(doc):
+                return {"success": False, "error": "Invalid page number"}
+
+            page = doc[page_num]
+            # Render at 300 DPI equivalent (scale=300/72 ≈ 4.17) for OCR accuracy
+            scale = 300 / 72
+            mat = fitz.Matrix(scale, scale)
+            pix = page.get_pixmap(matrix=mat, alpha=False)
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+
+            # Get word-level bounding boxes from Tesseract
+            ocr_data = pytesseract.image_to_data(
+                img, lang=lang,
+                output_type=pytesseract.Output.DICT,
+                config="--psm 6"
+            )
+
+            page_w = page.rect.width
+            page_h = page.rect.height
+            img_w = pix.width
+            img_h = pix.height
+
+            spans = []
+            sid = 0
+            n = len(ocr_data["text"])
+            for i in range(n):
+                text = ocr_data["text"][i] or ""
+                conf = int(ocr_data["conf"][i])
+                if not text.strip() or conf < 30:
+                    continue
+                # Tesseract bbox is in image pixels — convert to PDF points
+                x = ocr_data["left"][i]
+                y = ocr_data["top"][i]
+                w = ocr_data["width"][i]
+                h = ocr_data["height"][i]
+                # Scale back to PDF coordinate space
+                x0 = x * page_w / img_w
+                y0 = y * page_h / img_h
+                x1 = (x + w) * page_w / img_w
+                y1 = (y + h) * page_h / img_h
+                font_size = round(max(h * page_h / img_h * 0.72, 6), 2)
+                spans.append({
+                    "id":        sid,
+                    "text":      text,
+                    "bbox":      [round(x0, 2), round(y0, 2), round(x1, 2), round(y1, 2)],
+                    "font":      "Helvetica",
+                    "size":      font_size,
+                    "flags":     0,
+                    "color_int": 0,
+                    "color_rgb": [0.0, 0.0, 0.0],
+                    "ocr":       True,
+                    "confidence": conf,
+                })
+                sid += 1
+
+            return {
+                "success":   True,
+                "page_num":  page_num,
+                "spans":     spans,
+                "ocr":       True,
+                "lang":      lang,
+            }
+        finally:
+            doc.close()
+
     def get_text_blocks(self, filepath, page_num):
         self._check_fitz()
         path = self._resolve(filepath)
@@ -146,7 +279,20 @@ class PDFHandler:
                             "color_rgb": self._color_int_to_rgb(color_int),
                         })
                         sid += 1
-            return {"success": True, "page_num": page_num, "spans": spans}
+
+            # Detect scanned page: no text spans extracted.
+            # Covers both "image block with type==1" and "zero blocks" (whole-page raster).
+            blocks = raw.get("blocks", [])
+            has_images = any(b.get("type") == 1 for b in blocks)
+            is_scanned = len(spans) == 0 and (has_images or len(blocks) == 0)
+
+            return {
+                "success":    True,
+                "page_num":   page_num,
+                "spans":      spans,
+                "is_scanned": is_scanned,
+                "ocr_available": self._tesseract_available(),
+            }
         finally:
             doc.close()
 

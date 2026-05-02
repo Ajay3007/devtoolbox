@@ -1,208 +1,192 @@
 <template>
-  <div class="pdf-editor-page">
-    <h1>📄 PDF Editor</h1>
-    <p class="subtitle">Click any text on the page to edit it. Changes are saved to a new file.</p>
+  <div class="pdf-page" @dragover.prevent @drop.prevent="onDrop">
+    <!-- Hidden inputs -->
+    <input type="file" ref="fileInput" @change="onFileSelect" accept=".pdf" style="display: none" />
+    
+    <ViewHeader
+      :icon="IconPDF"
+      title="PDF Editor"
+      subtitle="Edit text in place, redact, add watermark, or append pages."
+    >
+      <template #actions v-if="!pdf">
+        <button class="btn btn-primary" @click="$refs.fileInput.click()">
+          <IconUpload :size="13"/> Upload PDF
+        </button>
+      </template>
+      <template #actions v-else>
+        <button class="btn btn-primary" @click="saveAndDownload" :disabled="saving">
+          <IconDownload :size="13" v-if="!saving"/>
+          <span v-else style="animation: pulse 1s infinite">●</span> {{ saving ? 'Saving...' : 'Save PDF' }}
+        </button>
+      </template>
+    </ViewHeader>
 
-    <!-- ── Upload Zone ── -->
-    <div v-if="!pdf" class="upload-zone" @click="$refs.fileInput.click()"
-         @dragover.prevent @drop.prevent="onDrop">
-      <input ref="fileInput" type="file" accept=".pdf" @change="onFileSelect" hidden />
-      <div class="upload-icon">📄</div>
-      <p class="upload-text">Drop a PDF here or <strong>click to upload</strong></p>
-      <p class="upload-hint">Supported: .pdf</p>
-      <div v-if="uploading" class="upload-spinner">⏳ Uploading…</div>
-      <p v-if="uploadError" class="upload-error">❌ {{ uploadError }}</p>
-    </div>
-
-    <!-- ── Editor Layout ── -->
-    <div v-else class="editor-layout">
-
-      <!-- Left: page list -->
-      <aside class="page-list">
-        <div class="pane-header">
-          <span>Pages</span>
-          <button class="btn-icon-sm" @click="resetEditor" title="Close">✕</button>
-        </div>
-        <div v-for="n in pdf.page_count" :key="n"
-             class="page-thumb" :class="{ active: currentPage === n - 1, deleted: isDeleted(n - 1) }"
-             @click="goToPage(n - 1)">
-          <div class="thumb-info">
-            <span class="thumb-num">{{ n }}</span>
-            <span v-if="editsByPage[n-1]" class="thumb-badge">
-              {{ editsByPage[n-1].length }}✏️
-            </span>
+    <template v-if="!pdf">
+      <div style="padding: 28px">
+        <div class="drop-zone" @click="$refs.fileInput.click()">
+          <IconUpload :size="32" style="color: var(--accent); margin-bottom: 12px" />
+          <div style="font-size: 14px; font-weight: 500; margin-bottom: 4px; color: var(--text)">Drop a PDF file here to edit</div>
+          <div style="font-size: 12px; color: var(--text-dim)">Or click to browse</div>
+          
+          <div v-if="uploading" style="margin-top: 14px; color: var(--accent); font-size: 12px">
+            Uploading...
           </div>
-          <button class="btn-icon-sm btn-delete-page" @click.stop="toggleDeletePage(n - 1)" 
-                  :title="isDeleted(n - 1) ? 'Restore Page' : 'Delete Page'">
-            {{ isDeleted(n - 1) ? '↩️' : '🗑️' }}
-          </button>
+        </div>
+      </div>
+    </template>
+
+    <template v-else>
+      <div class="file-bar">
+        <div style="display: flex; align-items: center; gap: 10px; min-width: 0">
+          <IconFiles :size="14" style="color: var(--accent-3)" />
+          <span class="mono" style="font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{ pdf.filename }}</span>
+          <Tag>page {{ currentPage + 1 }} / {{ pdf.page_count }}</Tag>
+        </div>
+        <div style="display: flex; gap: 6px">
+          <button @click="goToPage(Math.max(0, currentPage - 1))" :disabled="currentPage === 0" class="btn btn-ghost" style="padding: 5px 10px">◀ prev</button>
+          <button @click="goToPage(Math.min(pdf.page_count - 1, currentPage + 1))" :disabled="currentPage === pdf.page_count - 1" class="btn btn-ghost" style="padding: 5px 10px">next ▶</button>
+          <button @click="resetEditor" class="btn btn-ghost" style="padding: 5px 10px">Close</button>
+        </div>
+      </div>
+
+      <div class="main-grid">
+        <div class="sidebar">
+          <Panel title="Actions" :padding="14">
+            <div style="display: flex; flex-direction: column; gap: 8px">
+              <button @click="showMetadata = true" class="btn btn-ghost" style="justify-content: flex-start"><IconFiles :size="13"/> Edit Metadata</button>
+              <button @click="showWatermark = true" class="btn btn-ghost" style="justify-content: flex-start"><IconHex :size="13"/> Add Watermark</button>
+              <button @click="toggleDeletePage(currentPage)" class="btn btn-ghost" style="justify-content: flex-start; color: var(--accent-4)" :class="{ 'active': isDeleted(currentPage) }">
+                <IconX :size="13"/> {{ isDeleted(currentPage) ? 'Restore Page' : 'Delete Page' }}
+              </button>
+            </div>
+          </Panel>
+
+          <Panel title="Edits" :subtitle="`${allEdits.length} total edits`" :padding="14" style="flex: 1">
+            <div v-if="allEdits.length === 0" style="color: var(--text-mute); font-size: 12px; text-align: center; padding: 20px 0">
+              No edits applied yet.
+            </div>
+            <div v-else style="display: flex; flex-direction: column; gap: 8px">
+              <div v-for="(edit, i) in allEdits" :key="i" class="edit-item">
+                <div class="mono" style="font-size: 10px; color: var(--text-mute); margin-bottom: 2px">Page {{ edit.page + 1 }} - {{ edit.action }}</div>
+                <div style="font-size: 12px; color: var(--text)">{{ truncate(edit.new_text || edit.original_text) }}</div>
+                <button @click="removeEdit(edit)" class="btn-icon" style="position: absolute; right: 4px; top: 4px"><IconX :size="11"/></button>
+              </div>
+              <button @click="clearAllEdits" class="btn btn-ghost" style="width: 100%; margin-top: 8px; font-size: 11px">Clear all</button>
+            </div>
+          </Panel>
+        </div>
+
+        <div class="pdf-viewer-area">
+          <div v-if="pageLoading" style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--bg); z-index: 10">
+            <div style="color: var(--accent); animation: pulse 1s infinite">Loading page...</div>
+          </div>
+
+          <!-- Scanned page banner -->
+          <div v-if="isScanned && !pageLoading" class="scanned-banner">
+            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap">
+              <span style="font-size: 13px; font-weight: 600">Scanned PDF — no selectable text detected.</span>
+              <template v-if="ocrAvailable">
+                <span style="font-size: 12px; color: var(--text-dim)">Run OCR to extract and edit text:</span>
+                <select v-model="ocrLang" class="mono" style="background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 3px 6px; font-size: 11px">
+                  <option value="eng">English</option>
+                  <option value="eng+hin">English + Hindi</option>
+                  <option value="hin">Hindi</option>
+                  <option value="eng+deu">English + German</option>
+                  <option value="eng+fra">English + French</option>
+                </select>
+                <button @click="runOCR" :disabled="ocrRunning" class="btn btn-primary" style="padding: 4px 12px; font-size: 12px">
+                  {{ ocrRunning ? 'Running OCR...' : 'Run OCR' }}
+                </button>
+              </template>
+              <template v-else>
+                <span style="font-size: 12px; color: #e67e22">
+                  Tesseract not installed —
+                  <code style="background: var(--panel-3); padding: 2px 5px; border-radius: 3px; font-size: 11px">winget install UB-Mannheim.TesseractOCR</code>
+                  then restart the server.
+                </span>
+              </template>
+            </div>
+            <div v-if="ocrError" style="margin-top: 6px; font-size: 12px; color: #e74c3c">{{ ocrError }}</div>
+          </div>
+
+          <div v-if="pageData && !pageLoading" class="pdf-canvas-wrapper" :style="{ opacity: isDeleted(currentPage) ? 0.3 : 1 }">
+            <img :src="'data:image/png;base64,' + pageData.image" class="pdf-img" />
+
+            <div
+              v-for="(span, i) in currentSpans"
+              :key="i"
+              class="pdf-span"
+              :class="{
+                'edited': isEdited(span),
+                'selected': selected === span,
+                'ocr-span': span.ocr
+              }"
+              :style="spanStyle(span)"
+              @click="selectSpan(span)"
+            ></div>
+          </div>
+          <div v-if="isDeleted(currentPage)" class="deleted-overlay">DELETED</div>
         </div>
         
-        <div class="append-section">
-          <input ref="appendFileInput" type="file" accept=".pdf" @change="onAppendFileSelect" hidden />
-          <button class="btn btn-append" @click="$refs.appendFileInput.click()" :disabled="appending">
-            {{ appending ? '⏳ Appending…' : '📄+ Append PDF' }}
-          </button>
-        </div>
-
-        <!-- Export Section -->
-        <div class="export-section" v-if="pdf">
-          <div class="edits-summary" v-if="allEdits.length || deletedPages.length">
-            <p>
-              <strong>{{ allEdits.length }}</strong> edit(s), 
-              <strong>{{ deletedPages.length }}</strong> deleted page(s)
-            </p>
-            <button class="btn btn-clear" @click="clearAllEdits">🗑 Clear All Edits</button>
+        <div v-if="selected" class="editor-popup">
+          <div style="margin-bottom: 8px; font-size: 11px; color: var(--text-dim)">
+            Edit text (font: {{ selected.font }}, size: {{ selected.size.toFixed(1) }})
           </div>
-          
-          <div class="output-name-row" style="margin-top:0.75rem">
-            <input v-model="outputName" class="output-input" placeholder="output_filename.pdf" />
-          </div>
-          <button class="btn btn-save" @click="saveAndDownload" :disabled="saving">
-            {{ saving ? '⏳ Processing…' : '💾 Save & Download' }}
-          </button>
-        </div>
-
-        <!-- Metadata Section -->
-        <div class="metadata-section" v-if="metadataEdits">
-          <div class="pane-subheader" @click="showMetadata = !showMetadata" style="cursor:pointer; margin-top:0;">
-            {{ showMetadata ? '▼' : '▶' }} ℹ️ Document Info
-          </div>
-          <div v-show="showMetadata" class="metadata-form">
-            <label class="meta-label">Title</label>
-            <input v-model="metadataEdits.title" class="meta-input" />
-            
-            <label class="meta-label">Author</label>
-            <input v-model="metadataEdits.author" class="meta-input" />
-            
-            <label class="meta-label">Subject</label>
-            <input v-model="metadataEdits.subject" class="meta-input" />
-            
-            <label class="meta-label">Creator</label>
-            <input v-model="metadataEdits.creator" class="meta-input" />
+          <textarea v-model="editText" class="edit-textarea mono" rows="3"></textarea>
+          <div style="display: flex; gap: 8px; margin-top: 8px">
+            <button @click="applyEdit('replace')" class="btn btn-primary" style="flex: 1">Replace</button>
+            <button @click="applyEdit('redact')" class="btn btn-danger" style="flex: 1">Redact</button>
+            <button @click="selected = null" class="btn btn-ghost">Cancel</button>
           </div>
         </div>
+      </div>
+    </template>
 
-        <!-- Watermark Section -->
-        <div class="metadata-section" v-if="pdf">
-          <div class="pane-subheader" @click="showWatermark = !showWatermark" style="cursor:pointer; margin-top:0;">
-            {{ showWatermark ? '▼' : '▶' }} 💧 Watermark
-          </div>
-          <div v-show="showWatermark" class="metadata-form">
-            <label class="meta-label">Text (e.g. CONFIDENTIAL)</label>
-            <input v-model="watermarkConfig.text" class="meta-input" placeholder="No watermark" />
-            
-            <div style="display:flex; gap:0.5rem; margin-top:0.3rem;">
-              <div style="flex:1;">
-                <label class="meta-label">Color (RGB)</label>
-                <input type="color" v-model="watermarkConfig.hexColor" class="meta-input" style="padding:0; height:30px;" />
-              </div>
-              <div style="flex:1;">
-                <label class="meta-label">Opacity (0.1 - 1)</label>
-                <input type="number" v-model.number="watermarkConfig.opacity" class="meta-input" step="0.1" min="0.1" max="1" />
-              </div>
-            </div>
-          </div>
-        </div>
-      </aside>
-
-      <!-- Center: page canvas -->
-      <main class="page-canvas-wrap">
-        <div v-if="pageLoading" class="page-loading">⏳ Rendering page…</div>
-        <div v-else-if="pageData" class="page-canvas" ref="pageCanvas"
-             :style="{ width: pageData.img_width + 'px', height: pageData.img_height + 'px' }">
-
-          <!-- Rendered page image -->
-          <img :src="'data:image/png;base64,' + pageData.image"
-               :width="pageData.img_width" :height="pageData.img_height"
-               class="page-image" draggable="false" />
-
-          <!-- Text-span overlays -->
-          <div v-for="span in currentSpans" :key="span.id"
-               class="span-overlay"
-               :class="{
-                 selected: selected && selected.id === span.id,
-                 edited: isEdited(span)
-               }"
-               :style="spanStyle(span)"
-               @click="selectSpan(span)"
-               :title="span.text">
-          </div>
-        </div>
-        <div v-else class="page-empty">Select a page to view it.</div>
-
-        <!-- Page nav -->
-        <div class="page-nav" v-if="pdf">
-          <button class="btn-nav" :disabled="currentPage === 0" @click="goToPage(currentPage - 1)">◀</button>
-          <span>Page {{ currentPage + 1 }} / {{ pdf.page_count }}</span>
-          <button class="btn-nav" :disabled="currentPage === pdf.page_count - 1" @click="goToPage(currentPage + 1)">▶</button>
-        </div>
-      </main>
-
-      <!-- Right: edit panel -->
-      <aside class="edit-panel">
-        <div class="pane-header">✏️ Text Editor</div>
-
-        <div v-if="!selected" class="edit-placeholder">
-          <p>👆 Click on any text block in the PDF to edit it.</p>
-        </div>
-
-        <div v-else class="edit-form">
-          <div class="edit-meta">
-            <span class="meta-pill">{{ selected.font }}</span>
-            <span class="meta-pill">{{ selected.size }}pt</span>
-            <span class="meta-pill" v-if="selected.flags & 16">Bold</span>
-            <span class="meta-pill italic-pill" v-if="selected.flags & 2">Italic</span>
-          </div>
-
-          <label class="edit-label">Original Text</label>
-          <div class="original-text">{{ selected.text }}</div>
-
-          <label class="edit-label">New Text</label>
-          <textarea v-model="editText" class="edit-textarea"
-                    :style="{ fontSize: Math.min(selected.size * 1.1, 18) + 'px' }"
-                    rows="4" placeholder="Enter replacement text…" />
-
-          <div class="edit-actions">
-            <button class="btn btn-apply" @click="applyEdit('replace')"
-                    :disabled="!editText || editText === selected.text">
-              ✅ Apply
-            </button>
-            <button class="btn btn-redact" @click="applyEdit('redact')" title="Blackout text entirely">
-              ⬛ Redact
-            </button>
-            <button class="btn btn-skip" @click="selected = null">Cancel</button>
-          </div>
-
-          <p v-if="editApplied" class="applied-msg">{{ editApplied }}</p>
-        </div>
-
-        <!-- Edits on this page -->
-        <div v-if="pageEdits.length" class="page-edits-list">
-          <div class="pane-subheader">Edits on page {{ currentPage + 1 }}</div>
-          <div v-for="(edit, i) in pageEdits" :key="i" class="edit-chip">
-            <span class="edit-chip-old">{{ truncate(edit.original_text) }}</span>
-            <span class="edit-chip-arrow">→</span>
-            <span class="edit-chip-new" v-if="edit.action === 'redact'">[REDACTED]</span>
-            <span class="edit-chip-new" v-else>{{ truncate(edit.new_text) }}</span>
-            <button class="chip-del" @click="removeEdit(edit)" title="Remove">✕</button>
-          </div>
-        </div>
-      </aside>
+    <div v-if="uploadError" class="error-strip">{{ uploadError }}</div>
+    <div v-if="saveResult" class="toast-strip">
+      Save complete! <button @click="downloadResult" style="background: none; border: none; color: inherit; text-decoration: underline; cursor: pointer; font-weight: bold">Download</button>
     </div>
 
-    <!-- Save success -->
-    <transition name="toast">
-      <div v-if="saveResult" class="toast-success">
-        ✅ Saved as <strong>{{ saveResult.filename }}</strong> —
-        <button class="toast-dl" @click="downloadResult">⬇ Download</button>
+    <!-- Metadata Modal -->
+    <div v-if="showMetadata && metadataEdits" class="modal-overlay" @click.self="showMetadata = false">
+      <div class="modal">
+        <h3 style="margin-top: 0; margin-bottom: 14px; font-size: 16px">Edit Metadata</h3>
+        <Field label="Title" v-model="metadataEdits.title" />
+        <div style="margin-top: 10px"><Field label="Author" v-model="metadataEdits.author" /></div>
+        <div style="margin-top: 10px"><Field label="Subject" v-model="metadataEdits.subject" /></div>
+        <div style="margin-top: 10px"><Field label="Creator" v-model="metadataEdits.creator" /></div>
+        <div style="display: flex; gap: 8px; margin-top: 18px">
+          <button @click="showMetadata = false" class="btn btn-primary" style="flex: 1">Done</button>
+        </div>
       </div>
-    </transition>
+    </div>
+
+    <!-- Watermark Modal -->
+    <div v-if="showWatermark" class="modal-overlay" @click.self="showWatermark = false">
+      <div class="modal">
+        <h3 style="margin-top: 0; margin-bottom: 14px; font-size: 16px">Add Watermark</h3>
+        <Field label="Text" v-model="watermarkConfig.text" placeholder="CONFIDENTIAL" />
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px">
+          <Field label="Color (Hex)" v-model="watermarkConfig.hexColor" />
+          <Field label="Opacity (0-1)" v-model.number="watermarkConfig.opacity" type="number" />
+        </div>
+        <div style="display: flex; gap: 8px; margin-top: 18px">
+          <button @click="showWatermark = false" class="btn btn-primary" style="flex: 1">Done</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
-
 <script>
+
+import ViewHeader from '../components/ViewHeader.vue'
+import Panel from '../components/Panel.vue'
+import Tag from '../components/Tag.vue'
+import Field from '../components/Field.vue'
+import { IconPDF, IconUpload, IconFiles, IconDownload, IconHex, IconX } from '../components/icons'
+
 export default {
+  components: { ViewHeader, Panel, Tag, Field, IconPDF, IconUpload, IconFiles, IconDownload, IconHex, IconX },
   name: 'PDFEditor',
   data() {
     return {
@@ -226,6 +210,11 @@ export default {
       saving:       false,
       saveResult:   null,
       outputName:   '',
+      isScanned:    false,
+      ocrAvailable: false,
+      ocrRunning:   false,
+      ocrLang:      'eng',
+      ocrError:     null,
     };
   },
 
@@ -265,10 +254,10 @@ export default {
           this.outputName = this.pdf.filename.replace('.pdf', '_edited.pdf');
           await this.goToPage(0);
         } else {
-          this.uploadError = res.data.message || 'Upload failed';
+          this.uploadError = res.data.data?.message || res.data.message || 'Upload failed';
         }
       } catch (err) {
-        this.uploadError = err.response?.data?.message || err.message || 'Upload failed';
+        this.uploadError = err.response?.data?.data?.message || err.response?.data?.message || err.message || 'Upload failed';
       } finally {
         this.uploading = false;
       }
@@ -294,10 +283,10 @@ export default {
           this.pdf.page_count = res.data.data.page_count;
           alert('PDF appended successfully!');
         } else {
-          alert('Append failed: ' + (res.data.message || 'Unknown error'));
+          alert('Append failed: ' + (res.data.data?.message || res.data.message || 'Unknown error'));
         }
       } catch (err) {
-        alert('Append error: ' + (err.response?.data?.message || err.message));
+        alert('Append error: ' + (err.response?.data?.data?.message || err.response?.data?.message || err.message));
       } finally {
         this.appending = false;
       }
@@ -305,11 +294,13 @@ export default {
 
     resetEditor() {
       this.pdf = null; this.pageData = null; this.currentSpans = [];
-      this.selected = null; this.allEdits = []; this.deletedPages = []; 
+      this.selected = null; this.allEdits = []; this.deletedPages = [];
       this.metadataEdits = null; this.showMetadata = false;
       this.watermarkConfig = { text: '', hexColor: '#e74c3c', opacity: 0.2 };
       this.showWatermark = false;
       this.saveResult = null;
+      this.isScanned = false; this.ocrAvailable = false;
+      this.ocrRunning = false; this.ocrError = null;
     },
 
     // ── Page navigation ─────────────────────────────────────────────────
@@ -325,11 +316,39 @@ export default {
           this.$axios.get(`/pdf/${this.pdf.filepath}/text/${n}`),
         ]);
         if (pageRes.data.success) this.pageData = pageRes.data.data;
-        if (textRes.data.success) this.currentSpans = textRes.data.data.spans;
+        if (textRes.data.success) {
+          const td = textRes.data.data;
+          this.currentSpans = td.spans || [];
+          this.isScanned    = td.is_scanned || false;
+          this.ocrAvailable = td.ocr_available || false;
+          this.ocrError     = null;
+        }
       } catch (err) {
         console.error('Page load error', err);
       } finally {
         this.pageLoading = false;
+      }
+    },
+
+    // ── OCR ─────────────────────────────────────────────────────────────
+    async runOCR() {
+      this.ocrRunning = true;
+      this.ocrError   = null;
+      try {
+        const res = await this.$axios.post(
+          `/pdf/${this.pdf.filepath}/ocr/${this.currentPage}`,
+          { lang: this.ocrLang }
+        );
+        if (res.data.success) {
+          this.currentSpans = res.data.data.spans || [];
+          this.isScanned    = false;
+        } else {
+          this.ocrError = res.data.data?.message || res.data.message || 'OCR failed';
+        }
+      } catch (err) {
+        this.ocrError = err.response?.data?.data?.message || err.response?.data?.message || err.message || 'OCR failed';
+      } finally {
+        this.ocrRunning = false;
       }
     },
 
@@ -449,10 +468,10 @@ export default {
           this.deletedPages = [];
           setTimeout(() => { this.saveResult = null; }, 10000);
         } else {
-          alert('Save failed: ' + (res.data.message || 'Unknown error'));
+          alert('Save failed: ' + (res.data.data?.message || res.data.message || 'Unknown error'));
         }
       } catch (err) {
-        alert('Save error: ' + (err.response?.data?.message || err.message));
+        alert('Save error: ' + (err.response?.data?.data?.message || err.response?.data?.message || err.message));
       } finally {
         this.saving = false;
       }
@@ -472,332 +491,224 @@ export default {
   },
 };
 </script>
-
 <style scoped>
-.pdf-editor-page {
-  max-width: 1400px;
-  margin: 0 auto;
-  animation: fadeIn 0.4s ease;
-}
-@keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
-
-h1 { font-size: 2rem; color: #333; margin-bottom: .25rem; }
-.subtitle { color: #666; margin-bottom: 1.5rem; }
-
-/* Upload */
-.upload-zone {
-  border: 3px dashed #667eea;
-  border-radius: 16px;
-  padding: 4rem 2rem;
-  text-align: center;
-  cursor: pointer;
-  background: #f8f9ff;
-  transition: all .25s;
-}
-.upload-zone:hover { background: #f0f4ff; border-color: #764ba2; }
-.upload-icon { font-size: 4rem; margin-bottom: 1rem; }
-.upload-text { font-size: 1.1rem; font-weight: 600; color: #333; }
-.upload-hint { color: #999; font-size: .88rem; margin-top: .4rem; }
-.upload-spinner { margin-top: 1rem; color: #667eea; font-weight: 600; }
-.upload-error { color: #e74c3c; margin-top: .75rem; font-size: .9rem; }
-
-/* Editor layout */
-.editor-layout {
-  display: grid;
-  grid-template-columns: 160px 1fr 300px;
-  gap: 1rem;
-  align-items: start;
-}
-
-/* Pane headers */
-.pane-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-weight: 700;
-  font-size: .95rem;
-  color: #667eea;
-  padding: .5rem .75rem;
-  background: #f0f4ff;
-  border-radius: 8px 8px 0 0;
-  border-bottom: 2px solid #c8d0f5;
-}
-.pane-subheader {
-  font-weight: 700;
-  font-size: .82rem;
-  color: #999;
-  text-transform: uppercase;
-  letter-spacing: .05em;
-  margin: 1rem 0 .5rem;
-}
-
-/* Page list */
-.page-list {
-  background: white;
-  border-radius: 10px;
-  box-shadow: 0 4px 16px rgba(0,0,0,.08);
-  overflow: hidden;
-  position: sticky;
-  top: 1rem;
-}
-.page-thumb {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: .55rem .75rem;
-  cursor: pointer;
-  font-size: .88rem;
-  border-bottom: 1px solid #f0f0f0;
-  transition: background .15s;
-}
-.page-thumb:hover { background: #f0f4ff; }
-.page-thumb.active { background: #667eea; color: white; font-weight: 700; }
-.page-thumb.deleted { opacity: 0.6; background: #ffebee; }
-.page-thumb.deleted .thumb-num { text-decoration: line-through; color: #e74c3c; }
-
-.thumb-info { display: flex; align-items: center; gap: .5rem; }
-.thumb-num { font-weight: 600; }
-.thumb-badge { background: #2ecc71; color: white; border-radius: 10px;
-               padding: .1rem .4rem; font-size: .72rem; }
-.btn-delete-page { opacity: 0.5; transition: opacity .2s; }
-.page-thumb:hover .btn-delete-page { opacity: 1; }
-
-.append-section {
-  padding: .5rem;
-  background: white;
-  border-bottom: 1px solid #f0f0f0;
-}
-
-.export-section {
-  padding: .75rem;
-  background: #f8f9ff;
-  border-top: 1px solid #c8d0f5;
-  margin-top: auto;
-}
-
-.edits-summary {
-  margin-bottom: .5rem;
-}
-.edits-summary p { font-size: .82rem; color: #555; margin-bottom: .5rem; }
-.no-edits-hint { padding: .75rem; font-size: .8rem; color: #aaa; text-align: center; }
-
-/* Metadata Section */
-.metadata-section {
-  padding: .75rem;
-  background: white;
-  border-top: 1px solid #f0f0f0;
-}
-.metadata-form {
-  margin-top: .5rem;
+.pdf-page {
   display: flex;
   flex-direction: column;
-  gap: .4rem;
+  height: 100%;
 }
-.meta-label { font-size: .75rem; font-weight: 600; color: #667eea; }
-.meta-input {
-  width: 100%;
-  box-sizing: border-box;
-  padding: .3rem .5rem;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  font-size: .8rem;
-  outline: none;
-}
-.meta-input:focus { border-color: #667eea; }
-
-/* Page canvas */
-.page-canvas-wrap {
-  display: block;
+.drop-zone {
+  border: 2px dashed var(--accent);
+  border-radius: 8px;
+  padding: 40px;
   text-align: center;
-  overflow-x: auto;
-  padding-bottom: 1rem;
-}
-.page-canvas {
-  position: relative;
-  display: inline-block;
-  text-align: left;
-  box-shadow: 0 8px 32px rgba(0,0,0,.18);
-  border-radius: 4px;
-  overflow: hidden;
-  margin-bottom: 1rem;
-}
-.page-image {
-  display: block;
-  user-select: none;
-}
-.span-overlay {
-  position: absolute;
+  background: color-mix(in oklab, var(--accent) 5%, transparent);
   cursor: pointer;
-  border: 1.5px solid transparent;
-  border-radius: 2px;
-  transition: background .15s, border-color .15s;
+  transition: all 0.2s;
 }
-.span-overlay:hover { background: rgba(102,126,234,.12); border-color: #667eea; }
-.span-overlay.selected { background: rgba(102,126,234,.25); border-color: #667eea; border-width: 2px; }
-.span-overlay.edited { background: rgba(46,204,113,.15); border-color: #2ecc71; }
-
-.page-loading, .page-empty {
-  padding: 4rem;
-  color: #999;
-  font-size: 1.1rem;
-  text-align: center;
+.drop-zone:hover {
+  background: color-mix(in oklab, var(--accent) 10%, transparent);
 }
-.page-nav {
+.file-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 28px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.main-grid {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  position: relative;
+}
+.sidebar {
+  width: 240px;
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  padding: 14px;
+  gap: 14px;
+  overflow-y: auto;
+  background: var(--bg);
+}
+.pdf-viewer-area {
+  flex: 1;
+  background: #1d2126;
+  padding: 28px;
   display: flex;
   justify-content: center;
-  align-items: center;
-  gap: 1rem;
-  font-size: .9rem;
-  color: #555;
+  overflow: auto;
+  position: relative;
 }
-
-/* Edit panel */
-.edit-panel {
-  background: white;
-  border-radius: 10px;
-  box-shadow: 0 4px 16px rgba(0,0,0,.08);
-  overflow: hidden;
-  position: sticky;
-  top: 1rem;
-  max-height: 90vh;
-  overflow-y: auto;
+.pdf-canvas-wrapper {
+  position: relative;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  transition: opacity 0.2s;
+  /* Allow natural scaling but constrain to not be absurdly large if possible */
+  max-width: fit-content;
+  margin: 0 auto;
 }
-.edit-placeholder { padding: 2rem 1rem; color: #aaa; text-align: center; font-size: .9rem; }
-.edit-form { padding: 1rem; }
-
-.edit-meta { display: flex; gap: .4rem; flex-wrap: wrap; margin-bottom: .75rem; }
-.meta-pill {
-  background: #f0f4ff;
-  color: #667eea;
-  border: 1px solid #c8d0f5;
-  border-radius: 10px;
-  padding: .2rem .6rem;
-  font-size: .75rem;
-  font-weight: 600;
+.pdf-img {
+  display: block;
 }
-.italic-pill { font-style: italic; }
-
-.edit-label { font-size: .8rem; font-weight: 700; color: #667eea; display: block; margin-bottom: .25rem; }
-.original-text {
-  background: #f8f8f8;
-  border: 1px solid #eee;
+.pdf-span {
+  position: absolute;
+  border-bottom: 1px dashed transparent;
+  cursor: pointer;
+  border-radius: 2px;
+}
+.pdf-span:hover {
+  background: color-mix(in oklab, var(--accent-3) 20%, transparent);
+  border-bottom: 1px dashed var(--accent-3);
+}
+.pdf-span.edited {
+  background: color-mix(in oklab, var(--accent) 20%, transparent);
+  border-bottom: 1px dashed var(--accent);
+}
+.pdf-span.selected {
+  background: color-mix(in oklab, var(--accent-2) 30%, transparent);
+  border: 1px solid var(--accent-2);
+}
+.pdf-span.ocr-span {
+  border-bottom: 1px dashed color-mix(in oklab, var(--accent-5) 60%, transparent);
+}
+.pdf-span.ocr-span:hover {
+  background: color-mix(in oklab, var(--accent-5) 18%, transparent);
+  border-bottom: 1px dashed var(--accent-5);
+}
+.scanned-banner {
+  background: color-mix(in oklab, #e67e22 10%, var(--panel));
+  border: 1px solid color-mix(in oklab, #e67e22 35%, transparent);
   border-radius: 6px;
-  padding: .5rem .75rem;
-  font-size: .9rem;
-  color: #555;
-  margin-bottom: .75rem;
-  white-space: pre-wrap;
-  word-break: break-word;
+  padding: 10px 14px;
+  margin: 8px;
+  font-size: 12px;
+  color: var(--text);
+  flex-shrink: 0;
+}
+.deleted-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(-45deg);
+  font-size: 64px;
+  font-weight: 800;
+  color: rgba(231, 76, 60, 0.4);
+  pointer-events: none;
+}
+.editor-popup {
+  position: absolute;
+  bottom: 28px;
+  right: 28px;
+  width: 320px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+  z-index: 100;
 }
 .edit-textarea {
   width: 100%;
-  box-sizing: border-box;
-  padding: .6rem .75rem;
-  border: 2px solid #c8d0f5;
-  border-radius: 8px;
-  font-family: inherit;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 8px;
+  border-radius: 4px;
+  font-size: 12px;
   resize: vertical;
   outline: none;
-  transition: border-color .2s;
-  line-height: 1.5;
-}
-.edit-textarea:focus { border-color: #667eea; }
-
-.edit-actions { display: flex; gap: .5rem; margin-top: .75rem; }
-.applied-msg { color: #2ecc71; font-size: .82rem; margin-top: .5rem; font-weight: 600; }
-
-/* Edit chips */
-.edit-chip {
-  display: flex;
-  align-items: center;
-  gap: .35rem;
-  background: #f8f9ff;
-  border: 1px solid #c8d0f5;
-  border-radius: 6px;
-  padding: .4rem .6rem;
-  font-size: .78rem;
-  margin-bottom: .4rem;
-}
-.edit-chip-old { color: #e74c3c; text-decoration: line-through; flex: 1; word-break: break-all; }
-.edit-chip-arrow { color: #999; flex-shrink: 0; }
-.edit-chip-new { color: #27ae60; flex: 1; word-break: break-all; }
-.chip-del { background: none; border: none; cursor: pointer; color: #e74c3c; font-size: .9rem; padding: .1rem; }
-
-/* Buttons */
-.btn {
-  padding: .55rem 1.1rem;
-  border: none;
-  border-radius: 8px;
-  font-weight: 600;
-  cursor: pointer;
-  font-size: .88rem;
-  transition: all .2s;
-}
-.btn-apply { background: #667eea; color: white; }
-.btn-apply:hover:not(:disabled) { background: #5a6fd8; transform: translateY(-1px); }
-.btn-apply:disabled { opacity: .5; cursor: not-allowed; }
-.btn-redact { background: #34495e; color: white; }
-.btn-redact:hover { background: #2c3e50; transform: translateY(-1px); }
-.btn-skip { background: #ecf0f1; color: #555; }
-.btn-skip:hover { background: #dde1e5; }
-.btn-append { background: #e0e7ff; color: #4f46e5; width: 100%; border: 1px dashed #6366f1; }
-.btn-append:hover:not(:disabled) { background: #c7d2fe; }
-.btn-save { background: linear-gradient(135deg, #27ae60, #1abc9c); color: white; width: 100%; margin-bottom: .5rem; }
-.btn-save:disabled { opacity: .5; cursor: not-allowed; }
-.btn-clear { background: #ecf0f1; color: #e74c3c; width: 100%; font-size: .8rem; }
-.btn-nav {
-  background: #f4f6f8;
-  border: 1px solid #ddd;
-  border-radius: 6px;
-  padding: .3rem .65rem;
-  cursor: pointer;
-  font-size: 1rem;
-  transition: background .15s;
-}
-.btn-nav:disabled { opacity: .35; cursor: not-allowed; }
-.btn-icon-sm { background: none; border: none; cursor: pointer; color: #999; font-size: 1rem; }
-
-.output-name-row { margin-bottom: .5rem; }
-.output-input {
-  width: 100%;
   box-sizing: border-box;
-  padding: .4rem .6rem;
-  border: 1px solid #c8d0f5;
-  border-radius: 6px;
-  font-size: .8rem;
-  outline: none;
 }
-.output-input:focus { border-color: #667eea; }
-
-/* Toast */
-.toast-success {
-  position: fixed;
-  bottom: 2rem; right: 2rem;
-  background: #2ecc71;
-  color: white;
-  padding: .9rem 1.4rem;
-  border-radius: 10px;
+.edit-textarea:focus {
+  border-color: var(--accent);
+}
+.edit-item {
+  position: relative;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 8px 10px;
+  padding-right: 24px;
+}
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
   font-weight: 600;
-  box-shadow: 0 6px 24px rgba(46,204,113,.4);
-  z-index: 2000;
+  border-radius: 5px;
+  cursor: pointer;
+  border: none;
+  font-family: inherit;
+}
+.btn-primary {
+  background: var(--accent);
+  color: #0b0d10;
+}
+.btn-primary:hover {
+  filter: brightness(1.1);
+}
+.btn-danger {
+  background: var(--accent-4);
+  color: #fff;
+}
+.btn-ghost {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line-2);
+}
+.btn-ghost:hover:not(:disabled) {
+  background: var(--panel-3);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn-icon {
+  background: none;
+  border: none;
+  color: var(--text-mute);
+  cursor: pointer;
+  padding: 2px;
+}
+.btn-icon:hover {
+  color: var(--text);
+}
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
   display: flex;
   align-items: center;
-  gap: .75rem;
+  justify-content: center;
+  z-index: 1000;
 }
-.toast-dl {
-  background: rgba(255,255,255,.25);
-  border: 1px solid rgba(255,255,255,.6);
-  color: white;
-  padding: .3rem .75rem;
-  border-radius: 6px;
-  cursor: pointer;
-  font-weight: 700;
+.modal {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 20px;
+  width: 400px;
+  max-width: 90vw;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.5);
 }
-.toast-enter-active, .toast-leave-active { transition: all .3s; }
-.toast-enter-from, .toast-leave-to { opacity: 0; transform: translateY(1rem); }
-
-@media (max-width: 900px) {
-  .editor-layout { grid-template-columns: 1fr; }
-  .page-list, .edit-panel { position: static; max-height: none; }
+.error-strip, .toast-strip {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 16px;
+  border-radius: 5px;
+  font-size: 13px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  z-index: 1000;
 }
+.error-strip { background: var(--accent-4); color: #fff; }
+.toast-strip { background: var(--accent); color: #0b0d10; }
 </style>

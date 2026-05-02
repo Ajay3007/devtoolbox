@@ -1,0 +1,2 @@
+<template><svg :width="size" :height="size" viewBox="0 0 20 20" fill="none" stroke="currentColor" :stroke-width="sw" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="5" height="4" rx="1"/><rect x="13" y="4" width="5" height="4" rx="1"/><rect x="7.5" y="12" width="5" height="4" rx="1"/><path d="M7 6h6M5 8v4h4M15 8v4h-4"/></svg></template>
+<script>export default { name: 'IconFlow', props: { size: { type: [Number,String], default: 18 }, sw: { type: [Number,String], default: 1.5 } } }</script>

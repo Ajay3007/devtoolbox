@@ -1,0 +1,2 @@
+<template><svg :width="size" :height="size" viewBox="0 0 20 20" fill="none" stroke="currentColor" :stroke-width="sw" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="7" r="2.5"/><path d="M4 16.5c.7-2.8 3.1-4.5 6-4.5s5.3 1.7 6 4.5"/></svg></template>
+<script>export default { name: 'IconUseCases', props: { size: { type: [Number,String], default: 18 }, sw: { type: [Number,String], default: 1.5 } } }</script>

@@ -939,6 +939,20 @@ def append_pdf(filepath):
         return generate_response(str(e), 500, False)
 
 
+@app.route('/api/pdf/<path:filepath>/ocr/<int:page_num>', methods=['POST'])
+def ocr_pdf_page(filepath, page_num):
+    """Run Tesseract OCR on a scanned PDF page and return text spans."""
+    try:
+        data = request.get_json() or {}
+        lang = data.get('lang', 'eng')
+        result = pdf_handler.ocr_page(filepath, page_num, lang=lang)
+        if result['success']:
+            return generate_response(result, 200, True)
+        return generate_response(result.get('error', 'OCR failed'), 400, False)
+    except Exception as e:
+        return generate_response(str(e), 500, False)
+
+
 @app.route('/api/pdf/download/<path:filepath>', methods=['GET'])
 def download_pdf(filepath):
     try:

@@ -154,22 +154,35 @@ class PCAPHandler:
             for pkt in packets:
                 stats['total_bytes'] += len(pkt)
 
-                # Protocol statistics
+                # IP layer
                 if pkt.haslayer(IP):
                     stats['protocols']['IPv4'] += 1
                     src_ip = pkt[IP].src
                     dst_ip = pkt[IP].dst
                     stats['src_ips'][src_ip] += 1
                     stats['dst_ips'][dst_ip] += 1
-
                 elif pkt.haslayer(IPv6):
                     stats['protocols']['IPv6'] += 1
 
-                if pkt.haslayer(TCP):
-                    stats['protocols']['TCP'] += 1
+                # Transport + application layer — detect specific protocols first
+                if pkt.haslayer(DNS):
+                    stats['protocols']['DNS'] += 1
+                    if pkt.haslayer(UDP):
+                        stats['src_ports'][pkt[UDP].sport] += 1
+                        stats['dst_ports'][pkt[UDP].dport] += 1
+                    elif pkt.haslayer(TCP):
+                        stats['src_ports'][pkt[TCP].sport] += 1
+                        stats['dst_ports'][pkt[TCP].dport] += 1
+                elif pkt.haslayer(TCP):
+                    raw = bytes(pkt[Raw].load) if pkt.haslayer(Raw) else b''
+                    if len(raw) >= 3 and raw[0] == 0x16 and raw[1] == 0x03:
+                        stats['protocols']['TLS'] += 1
+                    elif raw[:4] in (b'GET ', b'POST', b'HTTP', b'HEAD', b'PUT ', b'DELE'):
+                        stats['protocols']['HTTP'] += 1
+                    else:
+                        stats['protocols']['TCP'] += 1
                     stats['src_ports'][pkt[TCP].sport] += 1
                     stats['dst_ports'][pkt[TCP].dport] += 1
-
                 elif pkt.haslayer(UDP):
                     stats['protocols']['UDP'] += 1
                     stats['src_ports'][pkt[UDP].sport] += 1
@@ -238,6 +251,18 @@ class PCAPHandler:
         """Determine packet type from protocol/flags for display only"""
         try:
             if pkt.haslayer(TCP):
+                # Check for TLS before generic TCP flag labels
+                if pkt.haslayer(Raw):
+                    raw = bytes(pkt[Raw].load)
+                    if len(raw) >= 3 and raw[0] == 0x16 and raw[1] == 0x03:
+                        return 'TLS'
+                    if raw[:4] in (b'GET ', b'POST', b'HTTP', b'HEAD', b'PUT ', b'DELE'):
+                        return 'HTTP'
+
+                # Check for DNS over TCP
+                if pkt.haslayer(DNS):
+                    return 'DNS'
+
                 flags = pkt[TCP].flags
                 syn = flags & 0x02
                 ack = flags & 0x10
@@ -262,6 +287,8 @@ class PCAPHandler:
                 return 'TCP'
 
             if pkt.haslayer(UDP):
+                if pkt.haslayer(DNS):
+                    return 'DNS'
                 return 'UDP'
             if pkt.haslayer(ICMP):
                 return 'ICMP'
@@ -1037,8 +1064,8 @@ class PCAPHandler:
             for i in range(packet_count):
                 # Increment destination IP for each packet
                 current_dst_ip = str(base_dst_ip_obj + i)
-                # Use different source ports for each flow
-                current_src_port = src_port + i
+                # Use different source ports for each flow (wrap within valid port range)
+                current_src_port = ((src_port - 1 + i) % 65534) + 1
                 
                 # Generate based on protocol
                 if protocol == 'tcp' or protocol == 'http' or protocol == 'tls':
@@ -1068,16 +1095,22 @@ class PCAPHandler:
                         eth = eth / Dot1Q(vlan=vlan_id)
 
                     dns_query = options.get('dns_query', 'example.com')
+                    dns_rr = self._build_dns_answer(dns_query, current_dst_ip, src_ip, options)
+                    qtype_num = dns_rr['qtype']
+                    answer_rr = dns_rr['rr']
+
                     ip_fwd = self._ip_layer(src_ip, current_dst_ip)
                     ip_rev = self._ip_layer(current_dst_ip, src_ip)
-                    # DNS Query
-                    query_pkt = eth / ip_fwd / UDP(sport=current_src_port, dport=53) / DNS(rd=1, qd=DNSQR(qname=dns_query))
+
+                    query_pkt = eth / ip_fwd / UDP(sport=current_src_port, dport=53) / DNS(
+                        rd=1, qd=DNSQR(qname=dns_query, qtype=qtype_num)
+                    )
                     packets.append(query_pkt)
 
-                    # DNS Response
                     response_pkt = eth / ip_rev / UDP(sport=53, dport=current_src_port) / DNS(
-                        id=query_pkt[DNS].id, qr=1, aa=1, qd=DNSQR(qname=dns_query),
-                        an=DNSRR(rrname=dns_query, ttl=300, rdata=current_dst_ip)
+                        id=query_pkt[DNS].id, qr=1, aa=1,
+                        qd=DNSQR(qname=dns_query, qtype=qtype_num),
+                        an=answer_rr
                     )
                     packets.append(response_pkt)
                 
@@ -1118,14 +1151,17 @@ class PCAPHandler:
 
                 elif protocol == 'arp':
                     target_ip = options.get('target_ip', current_dst_ip)
-                    # ARP Request (broadcast)
-                    arp_req = Ether(src=src_mac, dst='ff:ff:ff:ff:ff:ff') / ARP(
+                    eth_arp_req = Ether(src=src_mac, dst='ff:ff:ff:ff:ff:ff')
+                    eth_arp_rep = Ether(src=dst_mac, dst=src_mac)
+                    if vlan_id is not None:
+                        eth_arp_req = eth_arp_req / Dot1Q(vlan=vlan_id)
+                        eth_arp_rep = eth_arp_rep / Dot1Q(vlan=vlan_id)
+                    arp_req = eth_arp_req / ARP(
                         op='who-has', hwsrc=src_mac, psrc=src_ip,
                         hwdst='00:00:00:00:00:00', pdst=target_ip
                     )
                     packets.append(arp_req)
-                    # ARP Reply
-                    arp_rep = Ether(src=dst_mac, dst=src_mac) / ARP(
+                    arp_rep = eth_arp_rep / ARP(
                         op='is-at', hwsrc=dst_mac, psrc=target_ip,
                         hwdst=src_mac, pdst=src_ip
                     )
@@ -1269,6 +1305,77 @@ class PCAPHandler:
             pass
         return IP(src=src, dst=dst)
 
+    def _build_dns_answer(self, dns_query, answer_ip, src_ip, options):
+        """
+        Build a DNSRR answer and matching qtype for a DNS response.
+
+        Record type priority:
+          1. Explicit dns_record_type option ('A', 'AAAA', 'CNAME', 'MX')
+          2. Auto-detect from src_ip address family (IPv6 → AAAA, IPv4 → A)
+
+        Returns {'qtype': int, 'rr': DNSRR}
+
+        Note: Scapy 2.5.0 uses type-specific field decoders for DNSRR.rdata.
+        For A (type=1) IPField and AAAA (type=28) IP6Field both expect plain
+        address strings — never pre-packed bytes.
+        """
+        import ipaddress as _ipa
+
+        rtype = options.get('dns_record_type', '').upper()
+
+        # Auto-detect if not explicitly set
+        if not rtype:
+            try:
+                rtype = 'AAAA' if _ipa.ip_address(src_ip).version == 6 else 'A'
+            except ValueError:
+                rtype = 'A'
+
+        qtype_map = {'A': 1, 'AAAA': 28, 'CNAME': 5, 'MX': 15}
+        qtype_num = qtype_map.get(rtype, 1)
+
+        if rtype == 'AAAA':
+            # Validate; fall back to a well-formed IPv6 address on bad input
+            try:
+                _ipa.IPv6Address(answer_ip)
+                rdata_ip = answer_ip
+            except ValueError:
+                rdata_ip = '::1'
+            rr = DNSRR(rrname=dns_query, type=28, ttl=300, rdata=rdata_ip)
+
+        elif rtype == 'CNAME':
+            alias = options.get('dns_cname', f'www.{dns_query}')
+            rr = DNSRR(rrname=dns_query, type=5, ttl=300, rdata=alias)
+
+        elif rtype == 'MX':
+            exchange = options.get('dns_mx_exchange', f'mail.{dns_query}')
+            preference = int(options.get('dns_mx_preference', 10))
+            # Scapy 2.5 MX rdata: "preference exchange" as a string or DNSRRMX
+            try:
+                from scapy.layers.dns import DNSRRMX
+                rr = DNSRRMX(rrname=dns_query, ttl=300,
+                              preference=preference, exchange=exchange)
+            except ImportError:
+                # Older Scapy fallback — raw bytes
+                import struct
+                pref_bytes = struct.pack('>H', preference)
+                enc = b''
+                for label in exchange.rstrip('.').split('.'):
+                    lb = label.encode()
+                    enc += bytes([len(lb)]) + lb
+                enc += b'\x00'
+                rr = DNSRR(rrname=dns_query, type=15, ttl=300, rdata=pref_bytes + enc)
+
+        else:  # A (default)
+            # Validate; fall back to a well-formed IPv4 address on bad input
+            try:
+                _ipa.IPv4Address(answer_ip)
+                rdata_ip = answer_ip
+            except ValueError:
+                rdata_ip = '127.0.0.1'
+            rr = DNSRR(rrname=dns_query, type=1, ttl=300, rdata=rdata_ip)
+
+        return {'qtype': qtype_num, 'rr': rr}
+
     def _generate_tcp_flow(self, src_mac, dst_mac, src_ip, dst_ip, src_port, dst_port, protocol, vlan_id, index, options):
         """Generate a complete TCP 3-way handshake, data exchange, and connection termination"""
         import random
@@ -1345,16 +1452,24 @@ class PCAPHandler:
             flow_packets.append(tls_pkt)
 
             # TLS Server Hello (simplified)
-            server_hello = b'\x16\x03\x03\x00\x31' + bytes([0x00] * 49)  # Minimal TLS Server Hello
+            server_hello = b'\x16\x03\x03\x00\x31' + bytes([0x00] * 49)
             tls_response = build_eth() / ip_rev() / TCP(sport=dst_port, dport=src_port, flags='PA', seq=server_seq + 1, ack=client_seq + 1 + len(tls_hello)) / Raw(load=server_hello)
             flow_packets.append(tls_response)
 
             client_seq += len(tls_hello)
             server_seq += len(server_hello)
+
+            # Client ACK for Server Hello
+            tls_ack = build_eth() / ip_fwd() / TCP(sport=src_port, dport=dst_port, flags='A', seq=client_seq + 1, ack=server_seq + 1)
+            flow_packets.append(tls_ack)
             
         elif protocol == 'dns_tcp':
             dns_query = options.get('dns_query', 'example.com')
-            dns = DNS(rd=1, qd=DNSQR(qname=dns_query))
+            dns_rr = self._build_dns_answer(dns_query, dst_ip, src_ip, options)
+            qtype_num = dns_rr['qtype']
+            answer_rr = dns_rr['rr']
+
+            dns = DNS(rd=1, qd=DNSQR(qname=dns_query, qtype=qtype_num))
             dns_bytes = bytes(dns)
             dns_len = len(dns_bytes).to_bytes(2, 'big')
             payload = dns_len + dns_bytes
@@ -1362,8 +1477,11 @@ class PCAPHandler:
             data_pkt = build_eth() / ip_fwd() / TCP(sport=src_port, dport=dst_port, flags='PA', seq=client_seq + 1, ack=server_seq + 1) / Raw(load=payload)
             flow_packets.append(data_pkt)
 
-            # DNS Response
-            dns_response = DNS(id=dns.id, qr=1, aa=1, qd=DNSQR(qname=dns_query), an=DNSRR(rrname=dns_query, ttl=300, rdata=dst_ip))
+            dns_response = DNS(
+                id=dns.id, qr=1, aa=1,
+                qd=DNSQR(qname=dns_query, qtype=qtype_num),
+                an=answer_rr
+            )
             dns_response_bytes = bytes(dns_response)
             dns_response_len = len(dns_response_bytes).to_bytes(2, 'big')
             response_payload = dns_response_len + dns_response_bytes

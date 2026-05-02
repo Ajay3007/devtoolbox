@@ -1,0 +1,2 @@
+<template><svg :width="size" :height="size" viewBox="0 0 20 20" fill="none" stroke="currentColor" :stroke-width="sw" stroke-linecap="round" stroke-linejoin="round"><path d="M10 4v9"/><path d="M6 9l4 4 4-4"/><path d="M3 15v2h14v-2"/></svg></template>
+<script>export default { name: 'IconDownload', props: { size: { type: [Number,String], default: 18 }, sw: { type: [Number,String], default: 1.5 } } }</script>

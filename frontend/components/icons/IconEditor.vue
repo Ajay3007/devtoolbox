@@ -1,0 +1,2 @@
+<template><svg :width="size" :height="size" viewBox="0 0 20 20" fill="none" stroke="currentColor" :stroke-width="sw" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="15" height="12" rx="1.2"/><path d="M2.5 8h15"/><path d="M5.5 11.5h3M5.5 13.5h5"/><circle cx="13.5" cy="12.5" r="1.5"/></svg></template>
+<script>export default { name: 'IconEditor', props: { size: { type: [Number,String], default: 18 }, sw: { type: [Number,String], default: 1.5 } } }</script>
