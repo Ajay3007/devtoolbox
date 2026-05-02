@@ -172,6 +172,24 @@ class ReceiptHandler:
                 if ":" in w["text"]:
                     colon_idx = i
                     break
+
+            # Fallback: OCR sometimes misreads ':' as '-' (e.g. "-Rs.103.76").
+            # If no colon found, check if a word starts with '-' followed by
+            # alphabetic chars — treat it as a misread colon only when the line
+            # contains a known field label (avoids false-positives on real hyphens).
+            if colon_idx is None:
+                label_text_so_far = " ".join(w["text"] for w in line).lower()
+                if any(re.search(p, label_text_so_far) for p, _ in KNOWN_FIELDS):
+                    for i, w in enumerate(line):
+                        t = w["text"]
+                        if (t.startswith('-') and len(t) > 1
+                                and any(c.isalpha() for c in t[1:4])):
+                            line = list(line)
+                            line[i] = dict(line[i])
+                            line[i]["text"] = ':' + t[1:]
+                            colon_idx = i
+                            break
+
             if colon_idx is None:
                 continue
 
@@ -197,13 +215,10 @@ class ReceiptHandler:
             value_parts += [w["text"] for w in value_words]
             value_text = ":" + " ".join(value_parts).strip()
 
-            # ── Value bbox: starts at the ':' column, with gap-aware x0 ────
+            # ── Value bbox: starts exactly at the ':' character ─────────────
             if value_words:
-                # Case D: standalone colon word — gap before colon.
-                # Shift x0 one colon-word-width to the left so rendered value
-                # aligns with the original colon column.
-                colon_char_w = cw["width"]   # width of the ':' token
-                x0 = max(0, cw["left"] - colon_char_w)
+                # Case D: standalone colon word — x0 at the ':' token's left.
+                x0 = cw["left"]
                 y0 = cw["top"]
                 x1 = max(w["left"] + w["width"]  for w in value_words)
                 y1 = max(w["top"]  + w["height"] for w in value_words)
@@ -212,12 +227,9 @@ class ReceiptHandler:
             elif after_colon:
                 # Cases A/B/C: colon is embedded in the word.
                 char_w = cw["width"] / max(len(cw_text), 1)
-                if colon_pos_in_word == 0:
-                    # Colon at word start — gap case: extend one char_w left.
-                    x0 = max(0, int(cw["left"] - char_w))
-                else:
-                    # Label immediately before colon — start exactly at ':'.
-                    x0 = int(cw["left"] + char_w * colon_pos_in_word)
+                # Start exactly at the ':' character regardless of whether
+                # there's label text before it or not.
+                x0 = int(cw["left"] + char_w * colon_pos_in_word)
                 y0 = cw["top"]
                 x1 = cw["left"] + cw["width"]
                 y1 = cw["top"] + cw["height"]
@@ -247,15 +259,24 @@ class ReceiptHandler:
                 "line_height": line_height,
             })
 
-        # Normalize value_bbox x0 to the median colon-column so all values
-        # align regardless of which OCR path computed them (Case A vs D).
+        # Normalize value_bbox x0 to the consensus colon-column.
+        # All value_bbox[0] values now represent the actual ':' pixel position,
+        # so they should cluster tightly.  Use the median of the tightest cluster
+        # (within 20px of each other) to avoid outliers (e.g. indented sub-fields).
         x0_list = [f["value_bbox"][0] for f in fields if f["value_bbox"]]
         if len(x0_list) >= 3:
             x0_list_s = sorted(x0_list)
-            median_x0 = x0_list_s[len(x0_list_s) // 2]
+            # Find the densest cluster: largest group of values within a 20px window
+            best_start, best_count = 0, 0
+            for i, v in enumerate(x0_list_s):
+                count = sum(1 for u in x0_list_s if abs(u - v) <= 20)
+                if count > best_count:
+                    best_count, best_start = count, v
+            cluster = [v for v in x0_list_s if abs(v - best_start) <= 20]
+            colon_col = cluster[len(cluster) // 2]  # median of cluster
             for f in fields:
-                if f["value_bbox"] and abs(f["value_bbox"][0] - median_x0) < 40:
-                    f["value_bbox"][0] = median_x0
+                if f["value_bbox"] and abs(f["value_bbox"][0] - colon_col) < 50:
+                    f["value_bbox"][0] = colon_col
 
         return fields
 
@@ -272,6 +293,14 @@ class ReceiptHandler:
             y = ocr["top"][i]
             w = ocr["width"][i]
             h = ocr["height"][i]
+
+            # Normalize a leading '-' that OCR misread as ':'.
+            # Heuristic: starts with '-', followed by 1–3 alphabetic chars
+            # (e.g. "-Rs.103.76" → ":Rs.103.76").  Real negative numbers
+            # start with '-' followed by a digit, so they are unaffected.
+            if (txt.startswith('-') and len(txt) > 1
+                    and any(c.isalpha() for c in txt[1:4])):
+                txt = ':' + txt[1:]
 
             # Skip lone colons — structural punctuation, never editable.
             if txt == ':':
@@ -293,22 +322,15 @@ class ReceiptHandler:
                 # "16:51:06"      → unchanged (digit before colon)
                 if not any(c.isdigit() for c in before):
                     char_w = w / max(len(txt), 1)
-                    if colon_pos == 0:
-                        # Colon is at the start of the word — there was a gap
-                        # between the label and the colon (separate OCR tokens).
-                        # Rate/Sale/Volume land here; extending one char_w left
-                        # prevents the rendered value from shifting right.
-                        extra = int(char_w)
-                        x     = max(0, x - extra)
-                        w     = w + extra
-                        # txt stays ':value' — no label to strip
-                    else:
+                    if colon_pos > 0:
                         # Label text immediately precedes the colon in the same
                         # OCR word (e.g. "No:Apr-882977") — skip only the label.
                         label_skip = int(char_w * colon_pos)
                         txt        = txt[colon_pos:]
                         x         += label_skip
                         w          = max(w - label_skip, 1)
+                    # colon_pos == 0: colon is already at the word's left edge.
+                    # txt stays ':value', x stays at the colon position.
 
             else:
                 # No colon in this word.  Skip pure-label words (all alphabetic +
@@ -466,6 +488,34 @@ class ReceiptHandler:
 
         fields    = self._parse_fields(ocr, img_w, img_h)
         all_spans = self._all_spans(ocr)
+
+        # Normalize colon-starting span x0 to the consensus colon column and
+        # enrich spans with line_height from the matching field so that
+        # span-click edits use the same font sizing as field-panel edits.
+        colon_col = None
+        if fields:
+            x0s = [f["value_bbox"][0] for f in fields if f["value_bbox"]]
+            if x0s:
+                colon_col = sorted(x0s)[len(x0s) // 2]
+        if colon_col is not None or fields:
+            for s in all_spans:
+                if not s["text"].startswith(":"):
+                    continue
+                # Snap x0 to the colon column
+                if colon_col is not None and abs(s["bbox"][0] - colon_col) < 50:
+                    delta = colon_col - s["bbox"][0]
+                    s["bbox"][0] += delta
+                    s["bbox"][2] -= delta
+                # Copy line_height from the closest field on the same Y band
+                best_f, best_dy = None, 999
+                for f in fields:
+                    if not f["value_bbox"]:
+                        continue
+                    dy = abs(f["value_bbox"][1] - s["bbox"][1])
+                    if dy < best_dy:
+                        best_dy, best_f = dy, f
+                if best_f and best_dy < 20:
+                    s["line_height"] = best_f["line_height"]
 
         # Normalize inflated span heights (and bbox y1).
         # With conf=0, low-conf noise spans (stamps, watermarks) can have very

@@ -299,7 +299,7 @@ export default {
           bbox:          this.selectedSpan.bbox,
           new_text:      text,
           original_text: this.selectedSpan.text,
-          line_height:   this.selectedSpan.height,
+          line_height:   this.selectedSpan.line_height ?? this.selectedSpan.height,
         }
         this.spanEdits = { ...this.spanEdits }
       } else {
