@@ -59,6 +59,45 @@
             @input="onFieldInput(field, $event.target.value)"
             @keyup.escape="clearFieldEdit(field)"
           />
+          <div v-if="isFieldEdited(field)" class="size-row">
+            <span class="size-label">Size</span>
+            <input type="range" class="size-slider" min="50" max="150"
+                   :value="getFieldSizePct(field)"
+                   @input="onFieldSizeInput(field, +$event.target.value)" />
+            <span class="size-val mono">{{ getFieldSizePct(field) }}%</span>
+          </div>
+          <div v-if="isFieldEdited(field)" class="trim-box">
+            <div class="trim-label">Box trim</div>
+            <div class="trim-diagram">
+              <div class="trim-top">
+                <span class="trim-side-label">T</span>
+                <input type="number" class="trim-input" min="-50" max="80" step="5"
+                       :value="getFieldTrim(field,'top')"
+                       @change="onFieldTrimInput(field,'top',+$event.target.value)" />
+              </div>
+              <div class="trim-mid">
+                <div class="trim-left-wrap">
+                  <span class="trim-side-label">L</span>
+                  <input type="number" class="trim-input" min="-50" max="80" step="5"
+                         :value="getFieldTrim(field,'left')"
+                         @change="onFieldTrimInput(field,'left',+$event.target.value)" />
+                </div>
+                <div class="trim-center-rect"></div>
+                <div class="trim-right-wrap">
+                  <input type="number" class="trim-input" min="-50" max="80" step="5"
+                         :value="getFieldTrim(field,'right')"
+                         @change="onFieldTrimInput(field,'right',+$event.target.value)" />
+                  <span class="trim-side-label">R</span>
+                </div>
+              </div>
+              <div class="trim-bottom">
+                <span class="trim-side-label">B</span>
+                <input type="number" class="trim-input" min="-50" max="80" step="5"
+                       :value="getFieldTrim(field,'bottom')"
+                       @change="onFieldTrimInput(field,'bottom',+$event.target.value)" />
+              </div>
+            </div>
+          </div>
           <button v-if="isFieldEdited(field)" class="clear-btn"
                   @click="clearFieldEdit(field)" title="Clear edit">✕</button>
         </div>
@@ -70,6 +109,44 @@
             <div class="free-edit-arrow">→</div>
             <div class="free-edit-new">{{ e.new_text }}</div>
             <button class="clear-btn" @click="removeFreeEdit(e)">✕</button>
+          </div>
+        </div>
+
+        <!-- Appearance settings -->
+        <div class="appearance-section">
+          <button class="appearance-toggle" @click="showAppearance = !showAppearance">
+            <span>Appearance</span>
+            <span class="appearance-toggle-icon">{{ showAppearance ? '▲' : '▼' }}</span>
+          </button>
+          <div v-if="showAppearance" class="appearance-body">
+            <div class="appearance-hint">
+              Auto-detected from scan. Adjust if edited text looks too dark, blurry, or crisp.
+            </div>
+
+            <div class="ap-row">
+              <label class="ap-label">Opacity</label>
+              <input type="range" class="ap-slider" min="10" max="100"
+                     v-model.number="appearance.opacityPct" />
+              <span class="ap-val mono">{{ appearance.opacityPct }}%</span>
+            </div>
+
+            <div class="ap-row">
+              <label class="ap-label">Blur</label>
+              <input type="range" class="ap-slider" min="0" max="30" step="1"
+                     v-model.number="appearance.blurTenths" />
+              <span class="ap-val mono">{{ (appearance.blurTenths / 10).toFixed(1) }}px</span>
+            </div>
+
+            <div class="ap-row">
+              <label class="ap-label">Brightness</label>
+              <input type="range" class="ap-slider" min="-50" max="50"
+                     v-model.number="appearance.brightness" />
+              <span class="ap-val mono" :style="{ color: appearance.brightness > 0 ? 'var(--accent-2)' : appearance.brightness < 0 ? 'var(--accent-4)' : 'var(--text-dim)' }">
+                {{ appearance.brightness > 0 ? '+' : '' }}{{ appearance.brightness }}
+              </span>
+            </div>
+
+            <button class="ap-reset" @click="resetAppearance">Reset to auto</button>
           </div>
         </div>
       </div>
@@ -107,6 +184,40 @@
       <input ref="editInput" v-model="editText" class="edit-popup-input mono"
              @keyup.enter="applySpanEdit" @keyup.escape="selectedSpan = null"
              placeholder="Enter new value…" />
+      <div class="size-row" style="margin-top:10px">
+        <span class="size-label">Size</span>
+        <input type="range" class="size-slider" min="50" max="150"
+               v-model.number="editSizePct" />
+        <span class="size-val mono">{{ editSizePct }}%</span>
+      </div>
+      <div class="trim-box" style="margin-top:8px">
+        <div class="trim-label">Box trim</div>
+        <div class="trim-diagram">
+          <div class="trim-top">
+            <span class="trim-side-label">T</span>
+            <input type="number" class="trim-input" min="-50" max="80" step="5"
+                   v-model.number="editBboxTrim.top" />
+          </div>
+          <div class="trim-mid">
+            <div class="trim-left-wrap">
+              <span class="trim-side-label">L</span>
+              <input type="number" class="trim-input" min="-50" max="80" step="5"
+                     v-model.number="editBboxTrim.left" />
+            </div>
+            <div class="trim-center-rect"></div>
+            <div class="trim-right-wrap">
+              <input type="number" class="trim-input" min="-50" max="80" step="5"
+                     v-model.number="editBboxTrim.right" />
+              <span class="trim-side-label">R</span>
+            </div>
+          </div>
+          <div class="trim-bottom">
+            <span class="trim-side-label">B</span>
+            <input type="number" class="trim-input" min="-50" max="80" step="5"
+                   v-model.number="editBboxTrim.bottom" />
+          </div>
+        </div>
+      </div>
       <div style="display:flex;gap:8px;margin-top:8px">
         <button class="btn btn-primary" style="flex:1" @click="applySpanEdit">Apply</button>
         <button class="btn btn-ghost" @click="selectedSpan = null">Cancel</button>
@@ -154,19 +265,28 @@ export default {
 
   data() {
     return {
-      receipt:       null,   // upload result
+      receipt:       null,
       uploading:     false,
       uploadError:   null,
-      // edits keyed by bbox string "x0,y0,x1,y1"
-      fieldEdits:    {},     // bbox_key → new_text  (for structured fields)
-      spanEdits:     {},     // bbox_key → { bbox, new_text, original_text, line_height }
+      fieldEdits:    {},
+      spanEdits:     {},
       selectedSpan:  null,
       editText:      '',
+      editSizePct:   100,
+      editBboxTrim:  { top: 0, bottom: 0, left: 0, right: 0 },
+      fieldSizePcts: {},   // fieldKey → size_pct
+      fieldBboxTrims:{},   // fieldKey → { top, bottom, left, right }
       generating:    false,
       generateError: null,
       result:        null,
       showPreview:   false,
-      imgDisplayW:   0,      // rendered image width (px)
+      imgDisplayW:   0,
+      showAppearance: false,
+      appearance: {
+        opacityPct:  85,   // 10–100
+        blurTenths:  7,    // 0–30  (÷10 → sigma 0.0–3.0); default 0.7
+        brightness:  0,    // −50 to +50
+      },
     }
   },
 
@@ -188,6 +308,8 @@ export default {
             original_text: field.value,
             line_height:   field.line_height,
             label:         field.field_type,
+            size_pct:      this.fieldSizePcts[key] ?? 100,
+            bbox_trim:     this.fieldBboxTrims[key] || { top:0,bottom:0,left:0,right:0 },
           })
         }
       }
@@ -232,14 +354,18 @@ export default {
     },
 
     reset() {
-      this.receipt       = null
-      this.fieldEdits    = {}
-      this.spanEdits     = {}
-      this.selectedSpan  = null
-      this.result        = null
-      this.showPreview   = false
-      this.uploadError   = null
-      this.generateError = null
+      this.receipt        = null
+      this.fieldEdits     = {}
+      this.spanEdits      = {}
+      this.fieldSizePcts  = {}
+      this.fieldBboxTrims = {}
+      this.selectedSpan   = null
+      this.editSizePct    = 100
+      this.editBboxTrim   = { top:0, bottom:0, left:0, right:0 }
+      this.result         = null
+      this.showPreview    = false
+      this.uploadError    = null
+      this.generateError  = null
     },
 
     // ── Field helpers ────────────────────────────────────────────────────
@@ -262,7 +388,24 @@ export default {
     },
     clearFieldEdit(field) {
       delete this.fieldEdits[this.fieldKey(field)]
-      this.fieldEdits = { ...this.fieldEdits }
+      delete this.fieldSizePcts[this.fieldKey(field)]
+      this.fieldEdits    = { ...this.fieldEdits }
+      this.fieldSizePcts = { ...this.fieldSizePcts }
+    },
+    getFieldSizePct(field) {
+      return this.fieldSizePcts[this.fieldKey(field)] ?? 100
+    },
+    onFieldSizeInput(field, val) {
+      this.fieldSizePcts[this.fieldKey(field)] = val
+      this.fieldSizePcts = { ...this.fieldSizePcts }
+    },
+    getFieldTrim(field, side) {
+      return this.fieldBboxTrims[this.fieldKey(field)]?.[side] ?? 0
+    },
+    onFieldTrimInput(field, side, val) {
+      const key = this.fieldKey(field)
+      this.fieldBboxTrims[key] = { ...(this.fieldBboxTrims[key] || { top:0,bottom:0,left:0,right:0 }), [side]: val }
+      this.fieldBboxTrims = { ...this.fieldBboxTrims }
     },
     isFieldSpan(span) {
       return this.knownFields.some(
@@ -286,8 +429,10 @@ export default {
     },
     selectSpan(span) {
       this.selectedSpan = span
-      // Pre-fill with existing edit text, or fall back to the original span text
-      this.editText = this.spanEdits[this.bboxKey(span.bbox)]?.new_text ?? span.text
+      const existing    = this.spanEdits[this.bboxKey(span.bbox)]
+      this.editText    = existing?.new_text   ?? span.text
+      this.editSizePct = existing?.size_pct   ?? 100
+      this.editBboxTrim = existing?.bbox_trim ?? { top:0, bottom:0, left:0, right:0 }
       this.$nextTick(() => this.$refs.editInput?.focus())
     },
     applySpanEdit() {
@@ -300,7 +445,11 @@ export default {
           new_text:      text,
           original_text: this.selectedSpan.text,
           line_height:   this.selectedSpan.line_height ?? this.selectedSpan.height,
+          size_pct:      this.editSizePct,
+          bbox_trim:     { ...this.editBboxTrim },
         }
+        this.editSizePct  = 100
+        this.editBboxTrim = { top:0, bottom:0, left:0, right:0 }
         this.spanEdits = { ...this.spanEdits }
       } else {
         delete this.spanEdits[key]
@@ -312,6 +461,10 @@ export default {
     removeFreeEdit(e) {
       delete this.spanEdits[this.bboxKey(e.bbox)]
       this.spanEdits = { ...this.spanEdits }
+    },
+
+    resetAppearance() {
+      this.appearance = { opacityPct: 85, blurTenths: 7, brightness: 0 }
     },
 
     // ── Span positioning (percentage-based so it scales with image) ──────
@@ -342,6 +495,11 @@ export default {
           filepath:      this.receipt.filepath,
           edits:         this.allEdits,
           output_format: 'pdf',
+          appearance: {
+            opacity:    this.appearance.opacityPct / 100,
+            blur:       this.appearance.blurTenths  / 10,
+            brightness: this.appearance.brightness,
+          },
         })
         if (res.data.success) {
           this.result      = res.data.data
@@ -495,6 +653,150 @@ export default {
 .free-edit-original { color: var(--text-dim); font-family: monospace; flex: 1; }
 .free-edit-arrow    { color: var(--text-mute); flex-shrink: 0; }
 .free-edit-new      { color: var(--accent); font-family: monospace; flex: 1; }
+
+/* Appearance panel */
+.appearance-section {
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+.appearance-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--text-mute);
+  padding: 2px 0 6px;
+  font-family: inherit;
+}
+.appearance-toggle:hover { color: var(--text); }
+.appearance-toggle-icon { font-size: 9px; }
+.appearance-body { display: flex; flex-direction: column; gap: 10px; }
+.appearance-hint {
+  font-size: 10.5px;
+  color: var(--text-mute);
+  line-height: 1.4;
+}
+.ap-row {
+  display: grid;
+  grid-template-columns: 68px 1fr 38px;
+  align-items: center;
+  gap: 8px;
+}
+.ap-label {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.ap-slider {
+  -webkit-appearance: none;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line-2);
+  outline: none;
+  cursor: pointer;
+}
+.ap-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 13px; height: 13px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+}
+.ap-val {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: right;
+}
+.ap-reset {
+  align-self: flex-end;
+  font-size: 10.5px;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 3px 8px;
+  color: var(--text-mute);
+  cursor: pointer;
+  font-family: inherit;
+}
+.ap-reset:hover { color: var(--text); border-color: var(--accent); }
+
+/* Per-edit size control */
+.size-row {
+  display: grid;
+  grid-template-columns: 32px 1fr 38px;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+.size-label { font-size: 10px; color: var(--text-mute); }
+.size-slider {
+  -webkit-appearance: none;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line-2);
+  outline: none;
+  cursor: pointer;
+}
+.size-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 11px; height: 11px;
+  border-radius: 50%;
+  background: var(--accent-2);
+  cursor: pointer;
+}
+.size-val { font-size: 10px; color: var(--text-dim); text-align: right; }
+
+/* Bbox trim box-model diagram */
+.trim-box { margin-top: 6px; }
+.trim-label {
+  font-size: 10px; font-weight: 600; letter-spacing: .05em;
+  text-transform: uppercase; color: var(--text-mute); margin-bottom: 6px;
+}
+.trim-diagram {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+}
+.trim-top, .trim-bottom {
+  display: flex; align-items: center; gap: 5px;
+}
+.trim-mid {
+  display: flex; align-items: center; gap: 5px; width: 100%;
+  justify-content: center;
+}
+.trim-left-wrap, .trim-right-wrap {
+  display: flex; align-items: center; gap: 4px;
+}
+.trim-center-rect {
+  width: 48px; height: 28px;
+  border: 1.5px dashed var(--accent);
+  border-radius: 3px; flex-shrink: 0;
+  background: color-mix(in oklab, var(--accent) 6%, transparent);
+}
+.trim-side-label {
+  font-size: 9px; font-weight: 700; color: var(--text-mute);
+  font-family: var(--mono); min-width: 9px; text-align: center;
+}
+.trim-input {
+  width: 44px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--text);
+  font-size: 11px;
+  font-family: var(--mono);
+  padding: 3px 4px;
+  text-align: center;
+  outline: none;
+  -moz-appearance: textfield;
+}
+.trim-input::-webkit-inner-spin-button { opacity: 1; }
+.trim-input:focus { border-color: var(--accent); }
 
 /* Right image panel */
 .image-panel {

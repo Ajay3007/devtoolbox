@@ -43,24 +43,28 @@ KNOWN_FIELDS = [
     (r"volume",              "Volume"),
 ]
 
-# Monospace bold fonts in priority order (Mac, Linux, Windows)
+# Monospace bold fonts in priority order (Mac, Linux, Windows).
+# Each entry is (path, ttc_index) — ttc_index is 0 for plain .ttf files.
+# Courier New Bold is the closest match for HP thermal/dot-matrix receipt fonts:
+# digit shapes (0, 6, 9) and overall proportions align well with printed receipts.
 FONT_PATHS = [
-    "/System/Library/Fonts/Supplemental/Courier New Bold.ttf",
-    "/Library/Fonts/Courier New Bold.ttf",
-    "/usr/share/fonts/truetype/liberation/LiberationMono-Bold.ttf",
-    "/usr/share/fonts/truetype/freefont/FreeMonoBold.ttf",
-    r"C:\Windows\Fonts\courbd.ttf",
+    ("/System/Library/Fonts/Supplemental/Courier New Bold.ttf",      0),  # Mac
+    ("/Library/Fonts/Courier New Bold.ttf",                          0),  # Mac (alt)
+    ("/usr/share/fonts/truetype/liberation/LiberationMono-Bold.ttf", 0),  # Linux
+    ("/usr/share/fonts/truetype/freefont/FreeMonoBold.ttf",          0),  # Linux (alt)
+    (r"C:\Windows\Fonts\courbd.ttf",                                 0),  # Windows
 ]
 
 
 def _find_font():
-    for p in FONT_PATHS:
+    """Return (path, ttc_index) for the first available font, or (None, 0)."""
+    for p, idx in FONT_PATHS:
         if os.path.isfile(p):
-            return p
-    return None
+            return p, idx
+    return None, 0
 
 
-_FONT_PATH = _find_font()
+_FONT_PATH, _FONT_IDX = _find_font()
 
 
 class ReceiptHandler:
@@ -74,7 +78,7 @@ class ReceiptHandler:
     def _get_font(self, size: int) -> ImageFont.FreeTypeFont:
         if _FONT_PATH:
             try:
-                return ImageFont.truetype(_FONT_PATH, size)
+                return ImageFont.truetype(_FONT_PATH, size, index=_FONT_IDX)
             except Exception:
                 pass
         return ImageFont.load_default()
@@ -86,7 +90,7 @@ class ReceiptHandler:
         lo, hi = 4, 400
         while lo < hi:
             mid = (lo + hi + 1) // 2
-            font = ImageFont.truetype(_FONT_PATH, mid)
+            font = ImageFont.truetype(_FONT_PATH, mid, index=_FONT_IDX)
             try:
                 bb = font.getbbox(sample or "Xg")
                 h = bb[3] - bb[1]
@@ -391,6 +395,54 @@ class ReceiptHandler:
         mean = bg.mean(axis=0).astype(int)
         return (int(mean[0]), int(mean[1]), int(mean[2]))
 
+    def _analyze_global_appearance(self, arr: np.ndarray) -> dict:
+        """
+        Measure the visual quality of ALL printed text in the receipt image
+        and return a single appearance dict used for every edit.
+
+        Analysing the full image avoids the per-bbox sampling failure that
+        occurs when the row above a field is background (e.g. Bill No at the
+        top of the receipt), which previously produced a wrong (too-light) ink
+        colour.
+
+        Returns: { "ink_color": (r,g,b), "blur_sigma": float }
+        """
+        gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+
+        # ── Ink colour ──────────────────────────────────────────────────
+        # Use Otsu to separate ink from background globally.
+        _, ink_mask = cv2.threshold(
+            gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+        )
+        ink_pixels = arr[ink_mask > 0]   # all dark pixels in the image
+
+        if len(ink_pixels) >= 50:
+            # Median is robust against stamps / noise patches.
+            ink_color = tuple(int(v) for v in np.median(ink_pixels, axis=0))
+        else:
+            ink_color = (20, 20, 20)
+
+        # ── Blur sigma ──────────────────────────────────────────────────
+        # Laplacian variance over the ENTIRE image captures average sharpness.
+        # We restrict to ink-adjacent pixels so stamps/background don't bias it.
+        blur_sigma = 0.7   # safe default for phone-camera receipt scans
+        ink_px = int((ink_mask > 0).sum())
+        if ink_px > 100:
+            # Dilate ink mask to include edge-transition pixels
+            kernel = np.ones((3, 3), np.uint8)
+            edge_zone = cv2.dilate(ink_mask, kernel, iterations=1)
+            lap = cv2.Laplacian(gray, cv2.CV_32F)
+            sharpness = float(lap[edge_zone > 0].var()) if edge_zone.any() else 0.0
+            # Mapping: sharpness ~5000 → sigma 0.3 (crisp)
+            #          sharpness  ~500 → sigma 0.8 (phone scan)
+            #          sharpness  ~ 50 → sigma 1.5 (very blurry)
+            blur_sigma = float(np.clip(
+                2.0 - np.log10(max(sharpness, 1)) * 0.38,
+                0.3, 1.8
+            ))
+
+        return {"ink_color": ink_color, "blur_sigma": blur_sigma}
+
     def _inpaint_bbox(self, img: Image.Image, bbox: list, bg_color: tuple) -> Image.Image:
         """
         Remove ink within bbox while preserving the background texture
@@ -426,25 +478,60 @@ class ReceiptHandler:
 
     def _render_text(self, img: Image.Image, bbox: list,
                      text: str, line_height: int,
-                     color: tuple = (0, 0, 0)) -> Image.Image:
-        """Draw new text into bbox with auto-matched font size."""
+                     appearance: dict | None = None) -> Image.Image:
+        """
+        Draw new text into bbox with auto-matched font size.
+
+        If `appearance` is provided (from _analyze_text_appearance) the text
+        is rendered with the sampled ink colour and a Gaussian blur whose
+        sigma matches the original print+camera blur, so the replacement is
+        visually consistent with the rest of the scanned receipt.
+        """
         x0, y0, x1, y1 = [int(v) for v in bbox]
         bbox_h = max(y1 - y0, 1)
-        # Cap target height at line_height to prevent oversized text when the
-        # OCR bounding box is taller than a normal text line (e.g. stamp overlap).
-        target_h = min(bbox_h, line_height) if line_height > 0 else bbox_h
+        size_pct = float(appearance.get("size_pct", 100)) if appearance else 100.0
+        base_h   = min(bbox_h, line_height) if line_height > 0 else bbox_h
+        target_h = max(4, int(base_h * size_pct / 100.0))
         font_size = self._match_font_size(text, int(target_h * 0.90))
         font = self._get_font(font_size)
-        draw = ImageDraw.Draw(img)
+
+        ink_color  = appearance["ink_color"]  if appearance else (20, 20, 20)
+        blur_sigma = appearance["blur_sigma"] if appearance else 0.6
+
+        # Compute vertical position
         try:
             bb = font.getbbox(text)
             text_h = bb[3] - bb[1]
-            # Vertically centre text within the bbox
             y_pos = y0 + (bbox_h - text_h) // 2 - bb[1]
         except Exception:
             y_pos = y0 + 2
-        draw.text((x0, y_pos), text, font=font, fill=color)
-        return img
+
+        # Render text on a transparent RGBA layer, then blur + composite.
+        # This avoids drawing directly on the background, which would paint
+        # crisp pixels that look synthetic against a blurry scanned image.
+        layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        ImageDraw.Draw(layer).text(
+            (x0, y_pos), text, font=font, fill=(*ink_color, 255)
+        )
+
+        if blur_sigma > 0.25:
+            layer_arr = np.array(layer, dtype=np.float32)
+            for c in range(4):
+                layer_arr[:, :, c] = cv2.GaussianBlur(
+                    layer_arr[:, :, c], (0, 0), blur_sigma
+                )
+            layer = Image.fromarray(np.clip(layer_arr, 0, 255).astype(np.uint8))
+
+        # Apply opacity (user-controllable, default 0.85).
+        opacity = float(appearance.get("opacity", 0.85)) if appearance else 0.85
+        if opacity < 1.0:
+            r, g, b, a = layer.split()
+            a = a.point(lambda v: int(v * opacity))
+            layer = Image.merge("RGBA", (r, g, b, a))
+
+        base = img.convert("RGBA")
+        base.paste(layer, mask=layer.split()[3])
+        return base.convert("RGB")
 
     # ------------------------------------------------------------------ #
     #  Public API
@@ -567,18 +654,41 @@ class ReceiptHandler:
         }
 
     def process_edits(self, filepath: str, edits: list,
-                      output_format: str = "pdf") -> dict:
+                      output_format: str = "pdf",
+                      appearance_settings: dict | None = None) -> dict:
         """
         Apply edits to the original image.
 
         edits: [{ bbox:[x0,y0,x1,y1], new_text:str, line_height:float }, ...]
+
+        appearance_settings (all optional, user-supplied overrides):
+          opacity    : float 0.0–1.0  — text visibility (default: 0.85)
+          blur       : float 0.0–3.0  — stroke softness; 0 = crisp (default: auto)
+          brightness : int  -50–+50   — ink lightness offset (default: 0)
         """
         path = os.path.join(self.upload_folder, os.path.basename(filepath))
         if not os.path.exists(path):
             raise FileNotFoundError(f"Receipt image not found: {filepath}")
 
         img = Image.open(path).convert("RGB")
-        arr = np.array(img)
+
+        # Analyse the full receipt once for baseline ink colour + blur.
+        appearance = self._analyze_global_appearance(np.array(img))
+
+        # Apply user overrides on top of auto-detected values.
+        s = appearance_settings or {}
+        if "opacity" in s:
+            appearance["opacity"] = float(np.clip(s["opacity"], 0.0, 1.0))
+        else:
+            appearance.setdefault("opacity", 0.85)
+        if "blur" in s:
+            appearance["blur_sigma"] = float(np.clip(s["blur"], 0.0, 3.0))
+        if "brightness" in s:
+            offset = int(np.clip(s["brightness"], -50, 50))
+            appearance["ink_color"] = tuple(
+                int(np.clip(c + offset, 0, 255))
+                for c in appearance["ink_color"]
+            )
 
         for edit in edits:
             bbox      = edit["bbox"]
@@ -588,18 +698,43 @@ class ReceiptHandler:
             if new_text == "":
                 continue
 
-            # Span now covers colon+value, so we can use a small symmetric padding.
             iw, ih = img.size
             pbbox = [
-                max(0, bbox[0] - 3),    # left:   catch colon left-edge anti-aliasing
-                max(0, bbox[1] - 4),    # top:    ascenders
-                min(iw, bbox[2] + 5),   # right:  last char trailing pixels
-                min(ih, bbox[3] + 4),   # bottom: descenders
+                max(0, bbox[0] - 3),
+                max(0, bbox[1] - 4),
+                min(iw, bbox[2] + 5),
+                min(ih, bbox[3] + 4),
             ]
 
-            bg_color = self._sample_background(np.array(img), pbbox)
+            # Per-edit size override: clone global appearance and inject size_pct.
+            edit_appearance = dict(appearance)
+            edit_appearance["size_pct"] = float(edit.get("size_pct", 100))
+
+            # Apply per-edit bbox trim (T/B/L/R as % of bbox dimensions).
+            # Positive = move that edge inward (shrink); negative = expand.
+            trim = edit.get("bbox_trim") or {}
+            if trim:
+                bw = max(bbox[2] - bbox[0], 1)
+                bh = max(bbox[3] - bbox[1], 1)
+                bbox = [
+                    bbox[0] + int(bw * float(trim.get("left",   0)) / 100),
+                    bbox[1] + int(bh * float(trim.get("top",    0)) / 100),
+                    bbox[2] - int(bw * float(trim.get("right",  0)) / 100),
+                    bbox[3] - int(bh * float(trim.get("bottom", 0)) / 100),
+                ]
+                # Recalculate pbbox from adjusted bbox
+                iw, ih = img.size
+                pbbox = [
+                    max(0, bbox[0] - 3),
+                    max(0, bbox[1] - 4),
+                    min(iw, bbox[2] + 5),
+                    min(ih, bbox[3] + 4),
+                ]
+
+            arr      = np.array(img)
+            bg_color = self._sample_background(arr, pbbox)
             img = self._inpaint_bbox(img, pbbox, bg_color)
-            img = self._render_text(img, bbox, new_text, line_h)
+            img = self._render_text(img, bbox, new_text, line_h, edit_appearance)
 
         # Save result
         ts   = datetime.now().strftime("%Y%m%d_%H%M%S")

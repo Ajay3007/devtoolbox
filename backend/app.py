@@ -998,9 +998,11 @@ def receipt_process():
         filepath      = data.get('filepath')
         edits         = data.get('edits', [])
         output_format = data.get('output_format', 'pdf')
+        appearance    = data.get('appearance', {})
         if not filepath:
             return generate_response('filepath required', 400, False)
-        result = receipt_handler.process_edits(filepath, edits, output_format)
+        result = receipt_handler.process_edits(filepath, edits, output_format,
+                                               appearance_settings=appearance)
         return generate_response(result, 200, True)
     except FileNotFoundError as e:
         return generate_response(str(e), 404, False)
