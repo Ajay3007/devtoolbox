@@ -67,7 +67,15 @@
             <span class="size-val mono">{{ getFieldSizePct(field) }}%</span>
           </div>
           <div v-if="isFieldEdited(field)" class="trim-box">
-            <div class="trim-label">Box trim</div>
+            <div class="trim-label-row">
+              <span class="trim-label">Box trim</span>
+              <span class="trim-hint-icon" title="trim help">?</span>
+            </div>
+            <div class="trim-help">
+              <div class="trim-help-row"><span class="thk pos">+%</span><span class="thv">move edge inward (shrink box)</span></div>
+              <div class="trim-help-row"><span class="thk neg">−%</span><span class="thv">move edge outward (expand box)</span></div>
+              <div class="trim-help-row"><span class="thk">T/B</span><span class="thv">% of box height &nbsp;·&nbsp; L/R % of box width</span></div>
+            </div>
             <div class="trim-diagram">
               <div class="trim-top">
                 <span class="trim-side-label">T</span>
@@ -191,7 +199,15 @@
         <span class="size-val mono">{{ editSizePct }}%</span>
       </div>
       <div class="trim-box" style="margin-top:8px">
-        <div class="trim-label">Box trim</div>
+        <div class="trim-label-row">
+          <span class="trim-label">Box trim</span>
+          <span class="trim-hint-icon" title="trim help">?</span>
+        </div>
+        <div class="trim-help">
+          <div class="trim-help-row"><span class="thk pos">+%</span><span class="thv">move edge inward (shrink box)</span></div>
+          <div class="trim-help-row"><span class="thk neg">−%</span><span class="thv">move edge outward (expand box)</span></div>
+          <div class="trim-help-row"><span class="thk">T/B</span><span class="thv">% of box height &nbsp;·&nbsp; L/R % of box width</span></div>
+        </div>
         <div class="trim-diagram">
           <div class="trim-top">
             <span class="trim-side-label">T</span>
@@ -755,10 +771,42 @@ export default {
 
 /* Bbox trim box-model diagram */
 .trim-box { margin-top: 6px; }
-.trim-label {
-  font-size: 10px; font-weight: 600; letter-spacing: .05em;
-  text-transform: uppercase; color: var(--text-mute); margin-bottom: 6px;
+.trim-label-row {
+  display: flex; align-items: center; gap: 6px; margin-bottom: 5px;
 }
+.trim-label {
+  font-size: 10px; font-weight: 700; letter-spacing: .05em;
+  text-transform: uppercase; color: var(--text-mute);
+}
+.trim-hint-icon {
+  font-size: 9px; font-weight: 700;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--panel-3); border: 1px solid var(--line);
+  color: var(--text-mute); display: inline-flex;
+  align-items: center; justify-content: center; cursor: default;
+  flex-shrink: 0;
+}
+.trim-help {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+  display: flex; flex-direction: column; gap: 3px;
+}
+.trim-help-row {
+  display: flex; align-items: baseline; gap: 7px; font-size: 10.5px;
+}
+.thk {
+  font-family: var(--mono); font-size: 10px; font-weight: 700;
+  min-width: 24px; padding: 1px 4px;
+  border-radius: 3px; border: 1px solid var(--line);
+  background: var(--panel-3); color: var(--text-dim);
+  text-align: center; flex-shrink: 0;
+}
+.thk.pos { color: var(--accent); border-color: color-mix(in oklab, var(--accent) 35%, transparent); }
+.thk.neg { color: var(--accent-4); border-color: color-mix(in oklab, var(--accent-4) 35%, transparent); }
+.thv { color: var(--text-mute); font-size: 10px; line-height: 1.35; }
 .trim-diagram {
   display: flex; flex-direction: column; align-items: center; gap: 4px;
 }
