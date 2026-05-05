@@ -11,7 +11,12 @@ import json
 from datetime import datetime
 from pcap_handler import PCAPHandler
 from pdf_handler import PDFHandler
-from receipt_handler import ReceiptHandler
+try:
+    from receipt_handler import ReceiptHandler
+    _RECEIPT_AVAILABLE = True
+except ImportError:
+    ReceiptHandler = None
+    _RECEIPT_AVAILABLE = False
 from utils import generate_response, allowed_file
 
 # Configuration
@@ -33,7 +38,7 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 # Initialize handlers
 pcap_handler     = PCAPHandler(UPLOAD_FOLDER)
 pdf_handler      = PDFHandler(UPLOAD_FOLDER)
-receipt_handler  = ReceiptHandler(UPLOAD_FOLDER)
+receipt_handler  = ReceiptHandler(UPLOAD_FOLDER) if _RECEIPT_AVAILABLE else None
 
 
 @app.route('/api/health', methods=['GET'])
@@ -972,6 +977,8 @@ def download_pdf(filepath):
 @app.route('/api/receipt/upload', methods=['POST'])
 def receipt_upload():
     """Upload JPG/PNG/PDF scan, run OCR, return fields + spans."""
+    if not _RECEIPT_AVAILABLE:
+        return generate_response('Receipt editor requires opencv-python (cv2), which is not installed on this system', 503, False)
     try:
         if 'file' not in request.files:
             return generate_response('No file provided', 400, False)
@@ -991,6 +998,8 @@ def receipt_upload():
 @app.route('/api/receipt/process', methods=['POST'])
 def receipt_process():
     """Apply edits to receipt image, return edited image + result filename."""
+    if not _RECEIPT_AVAILABLE:
+        return generate_response('Receipt editor requires opencv-python (cv2), which is not installed on this system', 503, False)
     try:
         data = request.get_json()
         if not data:
@@ -1013,6 +1022,8 @@ def receipt_process():
 @app.route('/api/receipt/download/<path:filename>', methods=['GET'])
 def receipt_download(filename):
     """Download the generated receipt PDF/PNG."""
+    if not _RECEIPT_AVAILABLE:
+        return generate_response('Receipt editor requires opencv-python (cv2), which is not installed on this system', 503, False)
     try:
         path = os.path.abspath(os.path.join(UPLOAD_FOLDER, os.path.basename(filename)))
         if not os.path.exists(path):

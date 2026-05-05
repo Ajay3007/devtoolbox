@@ -17,7 +17,12 @@ import base64
 from datetime import datetime
 
 import numpy as np
-import cv2
+try:
+    import cv2
+    _CV2_AVAILABLE = True
+except ImportError:
+    cv2 = None
+    _CV2_AVAILABLE = False
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 import pytesseract
 
