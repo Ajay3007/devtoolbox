@@ -921,7 +921,10 @@ def upload_pdf():
         return generate_response('No file selected', 400, False)
     if not f.filename.lower().endswith('.pdf'):
         return generate_response('Only PDF files are supported', 400, False)
-    filename = secure_filename(f.filename)
+    # Timestamp-prefix to avoid silently overwriting an existing upload of the
+    # same name (matches the PCAP upload behavior).
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_')
+    filename = timestamp + secure_filename(f.filename)
     save_path = os.path.join(UPLOAD_FOLDER, filename)
     f.save(save_path)
     try:

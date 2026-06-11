@@ -5,12 +5,15 @@ Manages reading, writing, and modifying PCAP files using Scapy
 
 import os
 import shutil
+import logging
 from scapy.all import rdpcap, wrpcap, IP, IPv6, TCP, UDP, ICMP, Raw, Ether, Dot1Q, DNS, DNSQR, DNSRR, ARP
 from collections import defaultdict
 import binascii
 import re
 
 from utils import resolve_upload_path
+
+logger = logging.getLogger(__name__)
 
 
 class PCAPHandler:
@@ -328,7 +331,8 @@ class PCAPHandler:
             # Recalculate by reconstructing
             pkt = pkt.__class__(bytes(pkt))
             return pkt
-        except:
+        except Exception as e:
+            logger.warning('Checksum recalculation failed; returning packet with stale checksums: %s', e)
             return pkt
 
     def _reconstruct_packet(self, pkt_data):
@@ -336,7 +340,7 @@ class PCAPHandler:
         try:
             # This is a simplified version - can be expanded based on data format
             return None
-        except:
+        except Exception:
             return None
 
     def get_http_host(self, filepath, packet_index):
