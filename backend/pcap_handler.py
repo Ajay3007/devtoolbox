@@ -22,6 +22,10 @@ class PCAPHandler:
     def __init__(self, upload_folder='uploads'):
         """Initialize PCAP handler with upload folder"""
         self.upload_folder = upload_folder
+        # mtime-keyed parse cache: {abs_path: (mtime, PacketList)}.
+        # Read-only callers share the cached PacketList; mutators read via
+        # rdpcap() directly so they never alias (and corrupt) a cached object.
+        self._cache = {}
 
     def _resolve(self, filepath):
         """Resolve a user-supplied path to a safe absolute path inside the
@@ -30,9 +34,22 @@ class PCAPHandler:
         return resolve_upload_path(filepath, self.upload_folder, must_exist=True)
 
     def _read(self, filepath):
-        """Resolve, then read+parse a PCAP. Single choke point for all reads
-        (path containment lives here; caching can be layered on later)."""
-        return rdpcap(self._resolve(filepath))
+        """Resolve + parse a PCAP, caching the result by file mtime.
+
+        Single choke point for read-only access: path containment and caching
+        both live here. A write changes the file's mtime, so the cache
+        self-invalidates on the next read. Callers MUST NOT mutate the returned
+        PacketList — it is shared; mutating paths call rdpcap(self._resolve(...))
+        directly.
+        """
+        path = self._resolve(filepath)
+        mtime = os.path.getmtime(path)
+        cached = self._cache.get(path)
+        if cached is not None and cached[0] == mtime:
+            return cached[1]
+        packets = rdpcap(path)
+        self._cache[path] = (mtime, packets)
+        return packets
 
     def _get_modified_filepath(self, filepath):
         """Get the path for modified file, creating it if necessary"""
@@ -92,7 +109,8 @@ class PCAPHandler:
         offset: byte offset to start modification
         """
         try:
-            packets = self._read(filepath)
+            # Mutating path: read fresh (not via the shared read cache)
+            packets = rdpcap(self._resolve(filepath))
             
             if packet_index < 0 or packet_index >= len(packets):
                 return False
