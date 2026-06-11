@@ -5,6 +5,8 @@ import os
 import base64
 from datetime import datetime
 
+from utils import resolve_upload_path
+
 try:
     import fitz  # PyMuPDF
     FITZ_AVAILABLE = True
@@ -30,15 +32,11 @@ class PDFHandler:
 
 
     def _resolve(self, filepath):
-        """Return an absolute path that exists, or raise FileNotFoundError."""
-        for candidate in [
-            filepath,
-            os.path.join(self.upload_folder, filepath),
-            os.path.join(self.upload_folder, os.path.basename(filepath)),
-        ]:
-            if os.path.exists(candidate):
-                return os.path.abspath(candidate)
-        raise FileNotFoundError(f"PDF not found: {filepath}")
+        """Return an absolute path contained within the upload folder, or raise.
+
+        Rejects absolute paths and ../ traversal (raises ValueError); raises
+        FileNotFoundError if the resolved file does not exist."""
+        return resolve_upload_path(filepath, self.upload_folder, must_exist=True)
 
     @staticmethod
     def _color_int_to_rgb(color_int):

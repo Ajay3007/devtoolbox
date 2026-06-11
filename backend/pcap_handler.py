@@ -10,6 +10,8 @@ from collections import defaultdict
 import binascii
 import re
 
+from utils import resolve_upload_path
+
 
 class PCAPHandler:
     """Handler for PCAP file operations"""
@@ -18,8 +20,20 @@ class PCAPHandler:
         """Initialize PCAP handler with upload folder"""
         self.upload_folder = upload_folder
 
+    def _resolve(self, filepath):
+        """Resolve a user-supplied path to a safe absolute path inside the
+        upload folder. Raises ValueError on traversal, FileNotFoundError if
+        the file does not exist."""
+        return resolve_upload_path(filepath, self.upload_folder, must_exist=True)
+
+    def _read(self, filepath):
+        """Resolve, then read+parse a PCAP. Single choke point for all reads
+        (path containment lives here; caching can be layered on later)."""
+        return rdpcap(self._resolve(filepath))
+
     def _get_modified_filepath(self, filepath):
         """Get the path for modified file, creating it if necessary"""
+        filepath = self._resolve(filepath)
         directory = os.path.dirname(filepath)
         filename = os.path.basename(filepath)
         
@@ -42,7 +56,7 @@ class PCAPHandler:
         Read PCAP file and return list of packets with details
         """
         try:
-            packets = rdpcap(filepath)
+            packets = self._read(filepath)
             packet_list = []
 
             for idx, pkt in enumerate(packets):
@@ -57,7 +71,7 @@ class PCAPHandler:
     def get_packet_details(self, filepath, packet_index):
         """Get detailed information about a specific packet"""
         try:
-            packets = rdpcap(filepath)
+            packets = self._read(filepath)
             
             if packet_index < 0 or packet_index >= len(packets):
                 return None
@@ -75,7 +89,7 @@ class PCAPHandler:
         offset: byte offset to start modification
         """
         try:
-            packets = rdpcap(filepath)
+            packets = self._read(filepath)
             
             if packet_index < 0 or packet_index >= len(packets):
                 return False
@@ -109,8 +123,8 @@ class PCAPHandler:
             pkt = self._recalculate_checksums(pkt)
             packets[packet_index] = pkt
 
-            # Write back to file
-            wrpcap(filepath, packets)
+            # Write back to the (resolved) source file
+            wrpcap(self._resolve(filepath), packets)
             return True
 
         except Exception as e:
@@ -139,7 +153,7 @@ class PCAPHandler:
     def get_statistics(self, filepath):
         """Get statistics about the PCAP file"""
         try:
-            packets = rdpcap(filepath)
+            packets = self._read(filepath)
             
             stats = {
                 'total_packets': len(packets),
@@ -328,7 +342,7 @@ class PCAPHandler:
     def get_http_host(self, filepath, packet_index):
         """Extract HTTP HOST header from packet"""
         try:
-            packets = rdpcap(filepath)
+            packets = self._read(filepath)
             
             if packet_index < 0 or packet_index >= len(packets):
                 return None
@@ -404,7 +418,7 @@ class PCAPHandler:
     def get_tls_sni(self, filepath, packet_index):
         """Extract TLS SNI (Server Name Indication) from Client Hello"""
         try:
-            packets = rdpcap(filepath)
+            packets = self._read(filepath)
             
             if packet_index < 0 or packet_index >= len(packets):
                 return None
@@ -835,7 +849,7 @@ class PCAPHandler:
     def get_dns_query(self, filepath, packet_index):
         """Extract DNS query from packet (TCP or UDP)"""
         try:
-            packets = rdpcap(filepath)
+            packets = self._read(filepath)
             
             if packet_index < 0 or packet_index >= len(packets):
                 return None
@@ -961,7 +975,7 @@ class PCAPHandler:
     def analyze_packet_for_editing(self, filepath, packet_index):
         """Analyze packet to determine editable fields"""
         try:
-            packets = rdpcap(filepath)
+            packets = self._read(filepath)
             
             if packet_index < 0 or packet_index >= len(packets):
                 return {'editable': False}
@@ -1258,13 +1272,11 @@ class PCAPHandler:
             allowed_ext = {'pcap', 'pcapng'}
 
             for fp in filepaths:
-                # Resolve relative paths against upload folder when needed
-                resolved_path = fp
-                if not os.path.isabs(resolved_path) and not os.path.exists(resolved_path):
-                    resolved_path = os.path.join(self.upload_folder, os.path.basename(fp))
-
-                if not os.path.exists(resolved_path):
-                    return {'success': False, 'error': f'File not found: {fp}'}
+                # Resolve + contain within the upload folder
+                try:
+                    resolved_path = self._resolve(fp)
+                except (ValueError, FileNotFoundError) as e:
+                    return {'success': False, 'error': str(e)}
 
                 ext = os.path.splitext(resolved_path)[1].lower().lstrip('.')
                 if ext not in allowed_ext:
@@ -1301,13 +1313,7 @@ class PCAPHandler:
         for each configurable generator field.
         """
         try:
-            resolved = filepath
-            if not os.path.isabs(resolved) and not os.path.exists(resolved):
-                resolved = os.path.join(self.upload_folder, os.path.basename(filepath))
-            if not os.path.exists(resolved):
-                return {'success': False, 'error': f'File not found: {filepath}'}
-
-            packets = rdpcap(resolved)
+            packets = rdpcap(self._resolve(filepath))
 
             src_macs, dst_macs = set(), set()
             src_ips,  dst_ips  = set(), set()
@@ -1971,7 +1977,7 @@ class PCAPHandler:
         try:
             from datetime import datetime
 
-            packets = rdpcap(filepath)
+            packets = self._read(filepath)
             n = len(packets)
 
             valid_indices = sorted(set(

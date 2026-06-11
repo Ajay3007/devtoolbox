@@ -17,7 +17,7 @@ try:
 except ImportError:
     ReceiptHandler = None
     _RECEIPT_AVAILABLE = False
-from utils import generate_response, allowed_file
+from utils import generate_response, allowed_file, resolve_upload_path
 
 # Configuration
 UPLOAD_FOLDER = 'uploads'
@@ -131,19 +131,14 @@ def get_pcap_file(filepath):
     Get complete PCAP file information including packets and statistics
     """
     try:
+        # Resolve + contain the path before any filesystem access
+        file_path = resolve_upload_path(filepath, app.config['UPLOAD_FOLDER'], must_exist=True)
+
         # Read packets
         packets = pcap_handler.read_pcap(filepath)
-        
-        # Resolve path for size lookup
-        if os.path.isabs(filepath):
-            file_path = filepath
-        elif filepath.startswith(app.config['UPLOAD_FOLDER']):
-            file_path = filepath
-        else:
-            file_path = os.path.join(app.config['UPLOAD_FOLDER'], filepath)
 
         file_size = os.path.getsize(file_path)
-        
+
         # Calculate statistics
         stats = pcap_handler.get_statistics(filepath)
         
@@ -216,16 +211,13 @@ def modify_packet(filepath, packet_index):
 def export_pcap(filepath):
     """Export modified PCAP file"""
     try:
-        # Resolve path similar to get_pcap_file
-        if os.path.isabs(filepath):
-            file_path = filepath
-        elif filepath.startswith(app.config['UPLOAD_FOLDER']):
-            file_path = filepath
-        else:
-            file_path = os.path.join(app.config['UPLOAD_FOLDER'], filepath)
-
-        if not os.path.exists(file_path):
+        # Resolve + contain the path before serving it
+        try:
+            file_path = resolve_upload_path(filepath, app.config['UPLOAD_FOLDER'], must_exist=True)
+        except FileNotFoundError:
             return generate_response('File not found', 404, False)
+        except ValueError:
+            return generate_response('Invalid file path', 400, False)
 
         filename = os.path.basename(file_path)
         return send_file(
