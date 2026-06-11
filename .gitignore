@@ -62,3 +62,9 @@ uploads/
 temp/
 *.pcap
 *.pcapng
+
+# Test tooling / artifacts
+.testdeps/
+.pytest_cache/
+.coverage
+htmlcov/
