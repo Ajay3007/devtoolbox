@@ -170,6 +170,23 @@
                </button>
                <div v-if="replicateResult" style="margin-top: 10px; font-size: 12px; color: var(--accent-2)">{{ replicateResult }}</div>
             </DetailGroup>
+
+            <DetailGroup label="Extract" expanded>
+               <div style="margin-bottom: 10px; font-size: 12px; color: var(--text-dim)">
+                 Save the selected packet(s) as a new PCAP file. The current file is left unchanged.
+               </div>
+               <button @click="doExtract" class="btn btn-primary" :disabled="extracting || selectedPackets.length === 0">
+                 {{ extracting ? 'Extracting...' : `Extract Selected (${selectedPackets.length})` }}
+               </button>
+               <div v-if="extractResult.filename" style="margin-top: 10px; font-size: 12px; color: var(--accent-2)">
+                 ✅ Extracted {{ extractResult.packet_count }} packet(s) → <span class="mono">{{ extractResult.filename }}</span>
+                 <div style="display: flex; gap: 8px; margin-top: 8px">
+                   <button @click="downloadExtracted" class="btn btn-ghost" style="padding: 4px 8px"><IconDownload :size="12"/> Download</button>
+                   <button @click="openExtractedInEditor" class="btn btn-ghost" style="padding: 4px 8px"><IconEditor :size="12"/> Open in Editor</button>
+                 </div>
+               </div>
+               <div v-else-if="extractResult.error" style="margin-top: 10px; font-size: 12px; color: var(--accent-3)">❌ {{ extractResult.error }}</div>
+            </DetailGroup>
           </div>
         </template>
 
@@ -360,6 +377,9 @@ export default {
       replicateAutoSelect: true,
       replicating: false,
       replicateResult: '',
+      // Extraction
+      extracting: false,
+      extractResult: { filename: '', filepath: '', packet_count: 0, error: '' },
       // Packet ops
       deleteTargetIndex: null
     }
@@ -943,6 +963,7 @@ export default {
         this.selectedPackets = []
         this.bulkResult = ''
         this.replicateResult = ''
+        this.extractResult = { filename: '', filepath: '', packet_count: 0, error: '' }
         this.incrementalMode = false
       }
     },
@@ -1046,6 +1067,61 @@ export default {
       } finally {
         this.replicating = false
       }
+    },
+
+    // -----------------------------------------------------------------------
+    // Extraction: save selected packets to a new PCAP
+    // -----------------------------------------------------------------------
+    async doExtract() {
+      if (this.selectedPackets.length === 0) return
+      this.extracting = true
+      this.extractResult = { filename: '', filepath: '', packet_count: 0, error: '' }
+      try {
+        const res = await this.$axios.post(
+          `/pcap/extract/${this.fileInfo.filepath}`,
+          { packet_indices: this.selectedPackets }
+        )
+        if (res.data.success) {
+          const d = res.data.data
+          this.extractResult = { filename: d.filename, filepath: d.filepath, packet_count: d.packet_count, error: '' }
+        } else {
+          this.extractResult = { filename: '', filepath: '', packet_count: 0, error: res.data.data?.message || res.data.message || 'Extraction failed' }
+        }
+      } catch (err) {
+        this.extractResult = { filename: '', filepath: '', packet_count: 0, error: err.response?.data?.data?.message || err.response?.data?.message || err.message }
+      } finally {
+        this.extracting = false
+      }
+    },
+
+    async downloadExtracted() {
+      if (!this.extractResult.filepath) return
+      try {
+        const response = await this.$axios.get(
+          `/pcap/export/${encodeURIComponent(this.extractResult.filepath)}`,
+          { responseType: 'blob' }
+        )
+        const url = window.URL.createObjectURL(new Blob([response.data]))
+        const link = document.createElement('a')
+        link.href = url
+        link.setAttribute('download', this.extractResult.filename)
+        document.body.appendChild(link)
+        link.click()
+        link.remove()
+        window.URL.revokeObjectURL(url)
+      } catch (err) {
+        this.error = 'Error downloading extracted file'
+      }
+    },
+
+    openExtractedInEditor() {
+      if (!this.extractResult.filepath) return
+      const fp = this.extractResult.filepath
+      this.bulkMode = false
+      this.selectedPackets = []
+      this.extractResult = { filename: '', filepath: '', packet_count: 0, error: '' }
+      this.$router.push({ name: 'pcap-editor', query: { file: fp } }).catch(() => {})
+      this.loadFileFromPath(fp)
     },
 
     // -----------------------------------------------------------------------

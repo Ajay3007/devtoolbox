@@ -44,11 +44,37 @@
               <span v-else style="font-size: 11px; color: var(--text-mute); font-family: var(--mono)">disabled</span>
             </div>
           </div>
+
+          <div v-if="isTcpFlow" style="margin-top: 10px;">
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px; color: var(--text-dim)">
+              <input type="checkbox" v-model="config.options.payload_only" style="accent-color: var(--accent)" />
+              payload packets only
+            </label>
+            <div v-if="config.options.payload_only" style="margin-top: 4px; font-size: 11px; color: var(--text-mute); font-family: var(--mono)">
+              Skips the 3-way handshake, bare ACKs and FIN teardown — keeps only
+              data-bearing packets ({{ flowLength(config.protocol) }} per flow).
+            </div>
+          </div>
+
+          <div style="margin-top: 10px;">
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px; color: var(--text-dim)">
+              <input type="checkbox" v-model="config.use_size" style="accent-color: var(--accent)" />
+              fixed packet size
+            </label>
+            <div v-if="config.use_size" style="margin-top: 8px;">
+              <Field label="bytes" v-model.number="config.options.packet_size" :suffix="`${minFrameBytes}-65535`" type="number" />
+              <div style="margin-top: 6px; font-size: 11px; color: var(--text-mute); font-family: var(--mono); line-height: 1.5">
+                total frame size (L2 header → payload). Pads the data packet's
+                payload to hit the target; handshake/teardown packets stay minimal.
+                Floor is the header size (~{{ minFrameBytes }} B for this protocol).
+              </div>
+            </div>
+          </div>
         </Panel>
 
         <Panel title="3. Network">
           <div class="field-grid">
-            <Field label="src ip" v-model="config.options.src_ip">
+            <Field label="src ip" v-model="config.options.src_ip" :suffix="config.options.increment_src_ip ? 'auto ++' : ''" suffixColor="var(--accent)">
               <template #picker v-if="hasPicks('src_ip')">
                 <select class="field-picker mono" @change="applyPick('src_ip', $event.target.value); $event.target.value=''">
                   <option value="">↩ pick</option>
@@ -56,7 +82,7 @@
                 </select>
               </template>
             </Field>
-            <Field label="dst ip" v-model="config.options.dst_ip" suffix="auto ++" suffixColor="var(--accent)">
+            <Field label="dst ip" v-model="config.options.dst_ip" :suffix="config.options.increment_dst_ip ? 'auto ++' : ''" suffixColor="var(--accent)">
               <template #picker v-if="hasPicks('dst_ip')">
                 <select class="field-picker mono" @change="applyPick('dst_ip', $event.target.value); $event.target.value=''">
                   <option value="">↩ pick</option>
@@ -64,7 +90,7 @@
                 </select>
               </template>
             </Field>
-            <Field label="src port" v-model.number="config.options.src_port" type="number">
+            <Field label="src port" v-model.number="config.options.src_port" type="number" :suffix="config.options.increment_src_port ? 'auto ++' : ''" suffixColor="var(--accent)">
               <template #picker v-if="hasPicks('src_port')">
                 <select class="field-picker mono" @change="applyPick('src_port', +$event.target.value); $event.target.value=''">
                   <option value="">↩ pick</option>
@@ -72,7 +98,7 @@
                 </select>
               </template>
             </Field>
-            <Field label="dst port" v-model.number="config.options.dst_port" type="number">
+            <Field label="dst port" v-model.number="config.options.dst_port" type="number" :suffix="config.options.increment_dst_port ? 'auto ++' : ''" suffixColor="var(--accent)">
               <template #picker v-if="hasPicks('dst_port')">
                 <select class="field-picker mono" @change="applyPick('dst_port', +$event.target.value); $event.target.value=''">
                   <option value="">↩ pick</option>
@@ -81,7 +107,23 @@
               </template>
             </Field>
           </div>
-          
+
+          <div style="margin-top: 10px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap;">
+            <span style="font-size: 11px; color: var(--text-mute); font-family: var(--mono)">increment per packet:</span>
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px; color: var(--text-dim)">
+              <input type="checkbox" v-model="config.options.increment_src_ip" style="accent-color: var(--accent)" /> src ip
+            </label>
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px; color: var(--text-dim)">
+              <input type="checkbox" v-model="config.options.increment_dst_ip" style="accent-color: var(--accent)" /> dst ip
+            </label>
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px; color: var(--text-dim)">
+              <input type="checkbox" v-model="config.options.increment_src_port" style="accent-color: var(--accent)" /> src port
+            </label>
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px; color: var(--text-dim)">
+              <input type="checkbox" v-model="config.options.increment_dst_port" style="accent-color: var(--accent)" /> dst port
+            </label>
+          </div>
+
           <div style="margin-top: 10px;">
             <div class="field-grid">
               <Field label="src mac" v-model="config.options.src_mac">
@@ -138,6 +180,13 @@
             >
               IPv6 src detected — switch to AAAA or change src IP to IPv4
             </div>
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px; color: var(--text-dim); margin-top: 8px">
+              <input type="checkbox" v-model="config.options.dns_query_only" style="accent-color: var(--accent-5)" />
+              query only (no response)
+            </label>
+            <div v-if="config.options.dns_query_only" style="margin-top: 4px; font-size: 11px; color: var(--text-mute); font-family: var(--mono)">
+              {{ config.protocol === 'dns_tcp' ? 'TCP handshake + query data packet, no server response.' : 'Single query datagram per flow, no response.' }}
+            </div>
           </template>
 
           <Field v-if="config.protocol === 'icmp'" label="ICMP Payload" v-model="config.options.icmp_payload" color="var(--text-dim)"/>
@@ -186,14 +235,17 @@
   "packet_count":  <span style="color: var(--accent-2)">{{ config.packet_count }}</span>,
   "vlan_id":       <span style="color: var(--accent-2)">{{ config.vlan_id }}</span>,
   "options": {
-    "src_ip":        <span style="color: var(--accent-2)">"{{ config.options.src_ip }}"</span>,
-    "dst_ip":        <span style="color: var(--accent-2)">"{{ config.options.dst_ip }}"</span>,
-    "src_port":      <span style="color: var(--accent-2)">{{ config.options.src_port }}</span>,
-    "dst_port":      <span style="color: var(--accent-2)">{{ config.options.dst_port }}</span><span v-if="config.protocol === 'tls'">,
+    "src_ip":        <span style="color: var(--accent-2)">"{{ config.options.src_ip }}"</span><span v-if="config.options.increment_src_ip"> <span style="color: var(--accent)">++</span></span>,
+    "dst_ip":        <span style="color: var(--accent-2)">"{{ config.options.dst_ip }}"</span><span v-if="config.options.increment_dst_ip"> <span style="color: var(--accent)">++</span></span>,
+    "src_port":      <span style="color: var(--accent-2)">{{ config.options.src_port }}</span><span v-if="config.options.increment_src_port"> <span style="color: var(--accent)">++</span></span>,
+    "dst_port":      <span style="color: var(--accent-2)">{{ config.options.dst_port }}</span><span v-if="config.options.increment_dst_port"> <span style="color: var(--accent)">++</span></span><span v-if="isTcpFlow && config.options.payload_only">,
+    "payload_only":  <span style="color: var(--accent-2)">true</span></span><span v-if="config.use_size">,
+    "packet_size":   <span style="color: var(--accent-2)">{{ config.options.packet_size }}</span></span><span v-if="config.protocol === 'tls'">,
     "tls_sni":       <span style="color: var(--accent-4)">"{{ config.options.tls_sni }}"</span></span><span v-if="config.protocol === 'http'">,
     "http_host":     <span style="color: var(--accent-3)">"{{ config.options.http_host }}"</span></span><span v-if="config.protocol.startsWith('dns')">,
     "dns_query":     <span style="color: var(--accent-5)">"{{ config.options.dns_query }}"</span>,
-    "dns_record_type": <span style="color: var(--accent-5)">"{{ config.options.dns_record_type }}"</span></span>
+    "dns_record_type": <span style="color: var(--accent-5)">"{{ config.options.dns_record_type }}"</span>,
+    "dns_query_only": <span style="color: var(--accent-5)">{{ config.options.dns_query_only }}</span></span>
   }
 }</pre>
         </Panel>
@@ -221,7 +273,9 @@
             <div class="stats-text mono">
               total packets  <span style="color: var(--text)">{{ generatedFile.packet_count || config.packet_count * flowLength(config.protocol) }}</span><br/>
               file size      <span style="color: var(--text)">{{ formatBytes(generatedFile.size || generatedFile.file_size || config.packet_count * flowLength(config.protocol) * 84) }}</span><br/>
-              dst ip range   <span style="color: var(--accent-2)">{{ config.options.dst_ip }} → {{ incrementIp(config.options.dst_ip, config.packet_count - 1) }}</span><br/>
+              <template v-if="config.options.increment_src_ip">src ip range   <span style="color: var(--accent-2)">{{ config.options.src_ip }} → {{ incrementIp(config.options.src_ip, config.packet_count - 1) }}</span><br/></template>
+              <template v-if="config.options.increment_dst_ip">dst ip range   <span style="color: var(--accent-2)">{{ config.options.dst_ip }} → {{ incrementIp(config.options.dst_ip, config.packet_count - 1) }}</span><br/></template>
+              <template v-if="!config.options.increment_src_ip && !config.options.increment_dst_ip">ip addresses   <span style="color: var(--accent-2)">{{ config.options.src_ip }} → {{ config.options.dst_ip }} (fixed)</span><br/></template>
               checksums      <span style="color: var(--accent)">✓ all valid</span>
             </div>
             <div style="display: flex; gap: 8px">
@@ -272,16 +326,24 @@ export default {
         packet_count: 10,
         use_vlan: false,
         vlan_id: 100,
+        use_size: false,
         options: {
           src_mac: '00:0c:29:63:c0:fb',
           dst_mac: '00:0c:29:63:c0:fa',
           src_ip: '192.168.1.100',
           dst_ip: '192.168.1.200',
+          increment_src_ip: false,
+          increment_dst_ip: true,
           src_port: null,
           dst_port: 80,
+          increment_src_port: true,
+          increment_dst_port: false,
+          packet_size: 1400,
+          payload_only: false,
           http_host: 'example.com',
           dns_query: 'example.com',
           dns_record_type: 'A',
+          dns_query_only: false,
           tls_sni: 'example.com',
           icmp_payload: 'DevToolBox ICMP',
           target_ip: '192.168.1.200'
@@ -310,6 +372,18 @@ export default {
       const p = this.protos.find(x => x.k === this.config.protocol)
       return p ? p.c : 'var(--accent)'
     },
+    // Protocols that are synthesised as a full TCP flow (handshake → data → teardown)
+    isTcpFlow() {
+      return ['tcp', 'http', 'tls', 'dns_tcp'].includes(this.config.protocol);
+    },
+    // Smallest possible frame for the current protocol (header overhead with no
+    // payload). Used to label the input and as a lower bound hint.
+    minFrameBytes() {
+      const ipBytes = this.isIPv6(this.config.options.src_ip) ? 40 : 20;
+      const eth = 14 + (this.config.use_vlan ? 4 : 0);
+      const l4 = { udp: 8, dns_udp: 8 }[this.config.protocol] !== undefined ? 8 : 20; // TCP-based → 20, UDP-based → 8
+      return eth + ipBytes + l4;
+    },
     isValid() {
       return this.config.protocol && 
              this.config.packet_count >= 1 && 
@@ -321,7 +395,17 @@ export default {
   },
   methods: {
     flowLength(p) {
-      return { tcp: 9, http: 10, udp: 1, dns_udp: 2, dns_tcp: 9, tls: 10, icmp: 2, arp: 2 }[p] || 1;
+      const qOnly = this.config.options.dns_query_only;
+      const payloadOnly = this.config.options.payload_only;
+      if (p === 'dns_udp') return qOnly ? 1 : 2;
+      if (p === 'dns_tcp') {
+        if (payloadOnly) return qOnly ? 1 : 2;   // query data (+ response data)
+        return qOnly ? 8 : 9;
+      }
+      if (p === 'tcp')  return payloadOnly ? 1 : 9;
+      if (p === 'http') return payloadOnly ? 2 : 10;
+      if (p === 'tls')  return payloadOnly ? 2 : 10;
+      return { udp: 1, icmp: 2, arp: 2 }[p] || 1;
     },
     isIPv6(ip) {
       return ip && ip.includes(':');
@@ -427,6 +511,11 @@ export default {
         // Add VLAN if enabled
         if (this.config.use_vlan) {
           payload.vlan_id = this.config.vlan_id;
+        }
+
+        // Only send packet_size when the fixed-size toggle is on
+        if (!this.config.use_size) {
+          delete payload.options.packet_size;
         }
 
         // Clean up null values

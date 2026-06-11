@@ -547,6 +547,31 @@ def replicate_packets(filepath):
         return generate_response(f'Error replicating packets: {str(e)}', 500, False)
 
 
+@app.route('/api/pcap/extract/<path:filepath>', methods=['POST'])
+def extract_packets(filepath):
+    """
+    Extract selected packets into a new PCAP file (source left unchanged).
+    Request body: { 'packet_indices': [0, 2, 5] }
+    """
+    try:
+        data = request.get_json()
+        if not data or 'packet_indices' not in data:
+            return generate_response('packet_indices is required', 400, False)
+
+        indices = data['packet_indices']
+        if not isinstance(indices, list) or len(indices) == 0:
+            return generate_response('packet_indices must be a non-empty list', 400, False)
+
+        result = pcap_handler.extract_packets(filepath, indices)
+        if result['success']:
+            result['filepath'] = result.get('filepath', '').replace('\\', '/')
+            return generate_response(result, 200, True)
+        else:
+            return generate_response(result, 400, False)
+    except Exception as e:
+        return generate_response(f'Error extracting packets: {str(e)}', 500, False)
+
+
 @app.route('/api/pcap/packet/<path:filepath>/<int:packet_index>', methods=['DELETE'])
 def delete_packet(filepath, packet_index):
     """Delete a specific packet from the PCAP file."""

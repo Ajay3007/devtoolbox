@@ -1050,29 +1050,71 @@ class PCAPHandler:
             # Default values
             src_mac = options.get('src_mac', '00:0c:29:63:c0:fb')
             dst_mac = options.get('dst_mac', '00:0c:29:63:c0:fa')
-            src_ip = options.get('src_ip', '192.168.1.100')
+            base_src_ip = options.get('src_ip', '192.168.1.100')
             base_dst_ip = options.get('dst_ip', '192.168.1.200')
             src_port = options.get('src_port', random.randint(49152, 65535))
             dst_port = options.get('dst_port', 80)
-            
-            # Parse base destination IP to allow incrementing
+
+            # Optional fixed total frame size (Ethernet header → end of payload,
+            # i.e. what len(pkt) reports — no FCS). Applied to data packets only.
+            target_size = options.get('packet_size')
+            if target_size is not None:
+                try:
+                    target_size = int(target_size)
+                except (TypeError, ValueError):
+                    return {'success': False, 'error': 'packet_size must be an integer'}
+                if target_size < 1 or target_size > 65535:
+                    return {'success': False, 'error': 'packet_size must be between 1 and 65535 bytes'}
+                options['packet_size'] = target_size  # normalise for the flow builder
+
+            # Which address(es) to increment across packets/flows. Defaults
+            # preserve historical behaviour: dst increments, src stays fixed.
+            inc_src = bool(options.get('increment_src_ip', False))
+            inc_dst = bool(options.get('increment_dst_ip', True))
+
+            # Port increment toggles. Defaults preserve historical behaviour:
+            # src port walks per flow, dst port stays fixed.
+            inc_src_port = bool(options.get('increment_src_port', True))
+            inc_dst_port = bool(options.get('increment_dst_port', False))
+
+            # Effective base dst port: tcp/udp use the configured value, the
+            # other protocols use their well-known port.
+            if protocol == 'http':
+                dst_port_base = 80
+            elif protocol == 'tls':
+                dst_port_base = 443
+            elif protocol in ('dns_tcp', 'dns_udp'):
+                dst_port_base = 53
+            else:  # tcp, udp, icmp, arp (ports unused for the latter two)
+                dst_port_base = dst_port
+
+            # Parse base IPs to allow incrementing
             try:
                 base_dst_ip_obj = ipaddress.ip_address(base_dst_ip)
             except ValueError:
                 base_dst_ip_obj = ipaddress.ip_address('192.168.1.200')
-            
+            try:
+                base_src_ip_obj = ipaddress.ip_address(base_src_ip)
+            except ValueError:
+                base_src_ip_obj = None
+
             for i in range(packet_count):
-                # Increment destination IP for each packet
-                current_dst_ip = str(base_dst_ip_obj + i)
-                # Use different source ports for each flow (wrap within valid port range)
-                current_src_port = ((src_port - 1 + i) % 65534) + 1
+                # Per-packet/flow addresses, honouring the increment toggles
+                current_dst_ip = str(base_dst_ip_obj + i) if inc_dst else str(base_dst_ip_obj)
+                if inc_src and base_src_ip_obj is not None:
+                    src_ip = str(base_src_ip_obj + i)
+                else:
+                    src_ip = base_src_ip
+                # Per-flow ports, honouring the increment toggles (wrap within 1..65535)
+                current_src_port = (((src_port - 1 + i) % 65535) + 1) if inc_src_port else src_port
+                current_dst_port = (((dst_port_base - 1 + i) % 65535) + 1) if inc_dst_port else dst_port_base
                 
                 # Generate based on protocol
                 if protocol == 'tcp' or protocol == 'http' or protocol == 'tls':
                     # Generate complete TCP flow for TCP-based protocols
                     flow_packets = self._generate_tcp_flow(
                         src_mac, dst_mac, src_ip, current_dst_ip,
-                        current_src_port, dst_port if protocol == 'tcp' else (80 if protocol == 'http' else 443),
+                        current_src_port, current_dst_port,
                         protocol, vlan_id, i, options
                     )
                     packets.extend(flow_packets)
@@ -1085,7 +1127,11 @@ class PCAPHandler:
 
                     # UDP doesn't need full flow - single packet
                     ip_l = self._ip_layer(src_ip, current_dst_ip)
-                    pkt = eth / ip_l / UDP(sport=current_src_port, dport=dst_port) / Raw(load=f"UDP Packet {i+1}")
+                    udp_l = UDP(sport=current_src_port, dport=current_dst_port)
+                    load = f"UDP Packet {i+1}".encode()
+                    if target_size:
+                        load = self._fit_payload(eth / ip_l / udp_l, load, target_size)
+                    pkt = eth / ip_l / udp_l / Raw(load=load)
                     packets.append(pkt)
                 
                 elif protocol == 'dns_udp':
@@ -1102,23 +1148,28 @@ class PCAPHandler:
                     ip_fwd = self._ip_layer(src_ip, current_dst_ip)
                     ip_rev = self._ip_layer(current_dst_ip, src_ip)
 
-                    query_pkt = eth / ip_fwd / UDP(sport=current_src_port, dport=53) / DNS(
-                        rd=1, qd=DNSQR(qname=dns_query, qtype=qtype_num)
-                    )
+                    udp_q = UDP(sport=current_src_port, dport=current_dst_port)
+                    if target_size:
+                        overhead = len(eth / ip_fwd / udp_q)
+                        dns_q = self._build_sized_dns(dns_query, qtype_num, target_size - overhead)
+                    else:
+                        dns_q = DNS(rd=1, qd=DNSQR(qname=dns_query, qtype=qtype_num))
+                    query_pkt = eth / ip_fwd / udp_q / dns_q
                     packets.append(query_pkt)
 
-                    response_pkt = eth / ip_rev / UDP(sport=53, dport=current_src_port) / DNS(
-                        id=query_pkt[DNS].id, qr=1, aa=1,
-                        qd=DNSQR(qname=dns_query, qtype=qtype_num),
-                        an=answer_rr
-                    )
-                    packets.append(response_pkt)
+                    if not options.get('dns_query_only'):
+                        response_pkt = eth / ip_rev / UDP(sport=current_dst_port, dport=current_src_port) / DNS(
+                            id=query_pkt[DNS].id, qr=1, aa=1,
+                            qd=DNSQR(qname=dns_query, qtype=qtype_num),
+                            an=answer_rr
+                        )
+                        packets.append(response_pkt)
                 
                 elif protocol == 'dns_tcp':
                     # Generate complete TCP flow with DNS payload
                     flow_packets = self._generate_tcp_flow(
                         src_mac, dst_mac, src_ip, current_dst_ip,
-                        current_src_port, 53, protocol, vlan_id, i, options
+                        current_src_port, current_dst_port, protocol, vlan_id, i, options
                     )
                     packets.extend(flow_packets)
 
@@ -1131,7 +1182,7 @@ class PCAPHandler:
                         eth_rev = eth_rev / Dot1Q(vlan=vlan_id)
                     icmp_id = (i + 1) & 0xFFFF
                     icmp_seq = (i + 1) & 0xFFFF
-                    payload = options.get('icmp_payload', 'DevToolBox ICMP').encode()[:56]
+                    base_payload = options.get('icmp_payload', 'DevToolBox ICMP').encode()
 
                     import ipaddress as _ipaddr
                     try:
@@ -1141,11 +1192,15 @@ class PCAPHandler:
 
                     if _is_v6:
                         from scapy.layers.inet6 import ICMPv6EchoRequest, ICMPv6EchoReply
-                        req = eth / IPv6(src=src_ip, dst=current_dst_ip) / ICMPv6EchoRequest(id=icmp_id, seq=icmp_seq) / Raw(load=payload)
-                        rep = eth_rev / IPv6(src=current_dst_ip, dst=src_ip) / ICMPv6EchoReply(id=icmp_id, seq=icmp_seq) / Raw(load=payload)
+                        req_hdr = eth / IPv6(src=src_ip, dst=current_dst_ip) / ICMPv6EchoRequest(id=icmp_id, seq=icmp_seq)
+                        rep_hdr = eth_rev / IPv6(src=current_dst_ip, dst=src_ip) / ICMPv6EchoReply(id=icmp_id, seq=icmp_seq)
                     else:
-                        req = eth / IP(src=src_ip, dst=current_dst_ip) / ICMP(type=8, code=0, id=icmp_id, seq=icmp_seq) / Raw(load=payload)
-                        rep = eth_rev / IP(src=current_dst_ip, dst=src_ip) / ICMP(type=0, code=0, id=icmp_id, seq=icmp_seq) / Raw(load=payload)
+                        req_hdr = eth / IP(src=src_ip, dst=current_dst_ip) / ICMP(type=8, code=0, id=icmp_id, seq=icmp_seq)
+                        rep_hdr = eth_rev / IP(src=current_dst_ip, dst=src_ip) / ICMP(type=0, code=0, id=icmp_id, seq=icmp_seq)
+
+                    payload = self._fit_payload(req_hdr, base_payload, target_size) if target_size else base_payload[:56]
+                    req = req_hdr / Raw(load=payload)
+                    rep = rep_hdr / Raw(load=payload)
                     packets.append(req)
                     packets.append(rep)
 
@@ -1294,6 +1349,51 @@ class PCAPHandler:
         except Exception as e:
             return {'success': False, 'error': str(e)}
 
+    def _fit_payload(self, header_pkt, base_payload, target_size, fill=b'\x00'):
+        """
+        Return payload bytes so the full frame (header_pkt / Raw(payload)) is
+        exactly target_size bytes on the wire.
+
+        `header_pkt` is the fully-built packet WITHOUT the Raw layer, so its
+        len() is the header overhead (Ethernet [+VLAN] + IP + L4). The base
+        payload is padded with `fill` bytes or truncated to fit. If target_size
+        is smaller than the header overhead, an empty payload is returned (the
+        frame will then be header-sized, which is the smallest possible).
+        """
+        overhead = len(header_pkt)
+        want = target_size - overhead
+        if want <= 0:
+            return b''
+        if len(base_payload) >= want:
+            return base_payload[:want]
+        return base_payload + fill * (want - len(base_payload))
+
+    def _build_sized_dns(self, qname, qtype, target_msg_len):
+        """
+        Build a DNS query whose serialized length is exactly target_msg_len bytes.
+
+        DNS uses strict framing (and length-prefixing over TCP), so a packet
+        cannot be grown by appending raw bytes — trailing bytes get parsed as a
+        new (malformed) message. Instead we grow the message with a valid EDNS0
+        Padding option (RFC 7830, optcode 12), which dissects cleanly. If the
+        target is smaller than the smallest paddable message, the plain query is
+        returned (the frame then slightly differs from the requested size).
+        """
+        from scapy.layers.dns import DNSRROPT, EDNS0TLV
+
+        plain = DNS(rd=1, qd=DNSQR(qname=qname, qtype=qtype))
+
+        # Smallest message carrying an EDNS0 padding option (empty padding).
+        def with_pad(n):
+            return DNS(rd=1, qd=DNSQR(qname=qname, qtype=qtype),
+                       ar=DNSRROPT(rclass=4096, rdata=[EDNS0TLV(optcode=12, optdata=b'\x00' * n)]))
+
+        empty_opt_len = len(bytes(with_pad(0)))
+        if target_msg_len < empty_opt_len:
+            return plain
+
+        return with_pad(target_msg_len - empty_opt_len)
+
     def _ip_layer(self, src, dst):
         """Return IPv6() or IP() based on whether src is an IPv6 address."""
         import ipaddress
@@ -1379,8 +1479,13 @@ class PCAPHandler:
     def _generate_tcp_flow(self, src_mac, dst_mac, src_ip, dst_ip, src_port, dst_port, protocol, vlan_id, index, options):
         """Generate a complete TCP 3-way handshake, data exchange, and connection termination"""
         import random
-        
+
         flow_packets = []
+
+        # Optional fixed total frame size for the data-bearing packet(s).
+        # Padding is appended after any protocol payload, so the segment length
+        # feeds the seq/ack accounting below correctly.
+        target_size = options.get('packet_size')
 
         # Initial sequence numbers
         client_seq = random.randint(1000, 100000)
@@ -1422,6 +1527,10 @@ class PCAPHandler:
                 f"\r\n"
             )
             payload = http_request.encode()
+            if target_size:
+                payload = self._fit_payload(
+                    build_eth() / ip_fwd() / TCP(sport=src_port, dport=dst_port, flags='PA', seq=client_seq + 1, ack=server_seq + 1),
+                    payload, target_size)
             data_pkt = build_eth() / ip_fwd() / TCP(sport=src_port, dport=dst_port, flags='PA', seq=client_seq + 1, ack=server_seq + 1) / Raw(load=payload)
             flow_packets.append(data_pkt)
 
@@ -1448,6 +1557,10 @@ class PCAPHandler:
             # TLS Client Hello
             sni = options.get('tls_sni', 'example.com')
             tls_hello = self._build_tls_client_hello(sni)
+            if target_size:
+                tls_hello = self._fit_payload(
+                    build_eth() / ip_fwd() / TCP(sport=src_port, dport=dst_port, flags='PA', seq=client_seq + 1, ack=server_seq + 1),
+                    tls_hello, target_size)
             tls_pkt = build_eth() / ip_fwd() / TCP(sport=src_port, dport=dst_port, flags='PA', seq=client_seq + 1, ack=server_seq + 1) / Raw(load=tls_hello)
             flow_packets.append(tls_pkt)
 
@@ -1469,7 +1582,12 @@ class PCAPHandler:
             qtype_num = dns_rr['qtype']
             answer_rr = dns_rr['rr']
 
-            dns = DNS(rd=1, qd=DNSQR(qname=dns_query, qtype=qtype_num))
+            if target_size:
+                overhead = len(build_eth() / ip_fwd() / TCP(sport=src_port, dport=dst_port, flags='PA', seq=client_seq + 1, ack=server_seq + 1))
+                # reserve 2 bytes for the DNS-over-TCP length prefix
+                dns = self._build_sized_dns(dns_query, qtype_num, target_size - overhead - 2)
+            else:
+                dns = DNS(rd=1, qd=DNSQR(qname=dns_query, qtype=qtype_num))
             dns_bytes = bytes(dns)
             dns_len = len(dns_bytes).to_bytes(2, 'big')
             payload = dns_len + dns_bytes
@@ -1477,23 +1595,28 @@ class PCAPHandler:
             data_pkt = build_eth() / ip_fwd() / TCP(sport=src_port, dport=dst_port, flags='PA', seq=client_seq + 1, ack=server_seq + 1) / Raw(load=payload)
             flow_packets.append(data_pkt)
 
-            dns_response = DNS(
-                id=dns.id, qr=1, aa=1,
-                qd=DNSQR(qname=dns_query, qtype=qtype_num),
-                an=answer_rr
-            )
-            dns_response_bytes = bytes(dns_response)
-            dns_response_len = len(dns_response_bytes).to_bytes(2, 'big')
-            response_payload = dns_response_len + dns_response_bytes
+            if not options.get('dns_query_only'):
+                dns_response = DNS(
+                    id=dns.id, qr=1, aa=1,
+                    qd=DNSQR(qname=dns_query, qtype=qtype_num),
+                    an=answer_rr
+                )
+                dns_response_bytes = bytes(dns_response)
+                dns_response_len = len(dns_response_bytes).to_bytes(2, 'big')
+                response_payload = dns_response_len + dns_response_bytes
 
-            response_pkt = build_eth() / ip_rev() / TCP(sport=dst_port, dport=src_port, flags='PA', seq=server_seq + 1, ack=client_seq + 1 + len(payload)) / Raw(load=response_payload)
-            flow_packets.append(response_pkt)
+                response_pkt = build_eth() / ip_rev() / TCP(sport=dst_port, dport=src_port, flags='PA', seq=server_seq + 1, ack=client_seq + 1 + len(payload)) / Raw(load=response_payload)
+                flow_packets.append(response_pkt)
+                server_seq += len(response_payload)
 
             client_seq += len(payload)
-            server_seq += len(response_payload)
 
         else:  # tcp
             payload = f"TCP Data Packet {index + 1}".encode()
+            if target_size:
+                payload = self._fit_payload(
+                    build_eth() / ip_fwd() / TCP(sport=src_port, dport=dst_port, flags='PA', seq=client_seq + 1, ack=server_seq + 1),
+                    payload, target_size)
             data_pkt = build_eth() / ip_fwd() / TCP(sport=src_port, dport=dst_port, flags='PA', seq=client_seq + 1, ack=server_seq + 1) / Raw(load=payload)
             flow_packets.append(data_pkt)
 
@@ -1518,6 +1641,12 @@ class PCAPHandler:
         # 8. ACK: Client acknowledges server's FIN
         final_ack_pkt = build_eth() / ip_fwd() / TCP(sport=src_port, dport=dst_port, flags='A', seq=client_seq + 2, ack=server_seq + 2)
         flow_packets.append(final_ack_pkt)
+
+        # Optionally drop control packets (handshake / bare ACKs / teardown),
+        # keeping only the data-bearing packets. Sequence numbers were computed
+        # against the full flow, so the survivors stay internally consistent.
+        if options.get('payload_only'):
+            flow_packets = [p for p in flow_packets if p.haslayer(Raw)]
 
         return flow_packets
     
@@ -1829,6 +1958,46 @@ class PCAPHandler:
                 'copy_count': len(all_copies),
                 'new_indices': new_indices,
                 'modified_filepath': modified_filepath
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def extract_packets(self, filepath, packet_indices):
+        """
+        Extract the selected packets into a brand-new PCAP file, preserving
+        capture order. The source file is left untouched (no mutation).
+        Returns the new file's path, name and packet count.
+        """
+        try:
+            from datetime import datetime
+
+            packets = rdpcap(filepath)
+            n = len(packets)
+
+            valid_indices = sorted(set(
+                i for i in packet_indices if isinstance(i, int) and 0 <= i < n
+            ))
+            if not valid_indices:
+                return {'success': False, 'error': 'No valid packet indices provided'}
+
+            extracted = [packets[i] for i in valid_indices]
+
+            # Derive a clean output name from the (de-modified) source name
+            base = os.path.basename(filepath)
+            if base.startswith('modified_'):
+                base = base[len('modified_'):]
+            name, _ext = os.path.splitext(base)
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            out_name = f'extracted_{len(valid_indices)}pkts_{timestamp}_{name}.pcap'
+            out_path = os.path.join(self.upload_folder, out_name)
+
+            wrpcap(out_path, extracted)
+            return {
+                'success': True,
+                'filepath': out_path,
+                'filename': out_name,
+                'packet_count': len(extracted),
+                'source_indices': valid_indices
             }
         except Exception as e:
             return {'success': False, 'error': str(e)}
