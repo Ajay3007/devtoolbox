@@ -442,7 +442,7 @@ export default {
       try {
         const res = await this.$axios.get('/files');
         if (res.data.success) {
-          this.importPanel.fileList = (res.data.files || []).filter(
+          this.importPanel.fileList = (res.data.data.files || []).filter(
             f => ['pcap', 'pcapng'].includes(f.extension)
           );
         }
@@ -528,7 +528,7 @@ export default {
         const response = await this.$axios.post('/pcap/generate', payload);
 
         if (response.data.success) {
-          this.generatedFile = response.data;
+          this.generatedFile = response.data.data;
         } else {
           this.error = response.data.data?.message || response.data.message || 'Failed to generate PCAP';
         }

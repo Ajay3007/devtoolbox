@@ -215,11 +215,11 @@ export default {
         });
         
         if (response.data.success) {
-          this.fileData = response.data;
+          this.fileData = response.data.data;
           this.currentOffset = 0;
           this.searchResults = [];
           // Default to text view if text content is available
-          this.viewMode = response.data.text ? 'text' : 'hex';
+          this.viewMode = response.data.data.text ? 'text' : 'hex';
         } else {
           this.error = response.data.data?.message || response.data.message || 'Failed to load file';
         }

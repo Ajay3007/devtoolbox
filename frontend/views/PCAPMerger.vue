@@ -167,7 +167,7 @@ export default {
         });
 
         if (response.data.success) {
-          this.result = response.data;
+          this.result = response.data.data;
         } else {
           this.error = response.data.data?.message || response.data.message || 'Failed to merge files';
         }

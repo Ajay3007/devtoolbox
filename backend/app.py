@@ -145,15 +145,14 @@ def get_pcap_file(filepath):
         # Calculate statistics
         stats = pcap_handler.get_statistics(filepath)
         
-        return jsonify({
-            'success': True,
+        return generate_response({
             'file': {
                 'name': filepath,
                 'size': file_size
             },
             'packets': packets,
             'statistics': stats
-        })
+        }, 200, True)
     
     except Exception as e:
         return generate_response(f'Error loading file: {str(e)}', 500, False)
@@ -702,14 +701,13 @@ def generate_pcap():
         result = pcap_handler.generate_pcap(protocol, packet_count, vlan_id, options)
         
         if result['success']:
-            return jsonify({
-                'success': True,
+            return generate_response({
                 'filepath': result['filepath'].replace('\\', '/'),
                 'packet_count': result['packet_count'],
                 'protocol': result['protocol'],
                 'vlan_id': result.get('vlan_id'),
                 'message': f'Generated {result["packet_count"]} {protocol} packets'
-            })
+            }, 200, True)
         else:
             return generate_response(result['error'], 400, False)
     
@@ -757,13 +755,12 @@ def merge_pcaps():
         result = pcap_handler.merge_pcaps(saved_paths, output_name)
 
         if result['success']:
-            return jsonify({
-                'success': True,
+            return generate_response({
                 'filepath': result['filepath'].replace('\\', '/'),
                 'packet_count': result['packet_count'],
                 'source_files': result['source_files'],
                 'message': f"Merged {len(saved_paths)} files into {os.path.basename(result['filepath'])}"
-            })
+            }, 200, True)
         else:
             return generate_response(result['error'], 400, False)
 
@@ -791,7 +788,7 @@ def list_files():
                     'extension': os.path.splitext(filename)[1].lower().lstrip('.')
                 })
         files.sort(key=lambda x: x['modified'], reverse=True)
-        return jsonify({'success': True, 'files': files, 'count': len(files)})
+        return generate_response({'files': files, 'count': len(files)}, 200, True)
     except Exception as e:
         return generate_response(f'Error listing files: {str(e)}', 500, False)
 
@@ -804,7 +801,7 @@ def delete_upload_file(filename):
         if not os.path.exists(filepath):
             return generate_response('File not found', 404, False)
         os.remove(filepath)
-        return jsonify({'success': True, 'message': f'File {filename} deleted'})
+        return generate_response({'message': f'File {filename} deleted'}, 200, True)
     except Exception as e:
         return generate_response(f'Error deleting file: {str(e)}', 500, False)
 
@@ -827,7 +824,7 @@ def rename_upload_file(filename):
         if os.path.exists(new_path):
             return generate_response('A file with that name already exists', 400, False)
         os.rename(old_path, new_path)
-        return jsonify({'success': True, 'new_name': new_name})
+        return generate_response({'new_name': new_name}, 200, True)
     except Exception as e:
         return generate_response(f'Error renaming file: {str(e)}', 500, False)
 
@@ -901,7 +898,7 @@ def upload_hex_file():
         if text_content is not None:
             response_data['text'] = text_content
         
-        return jsonify(response_data)
+        return generate_response(response_data, 200, True)
 
     except Exception as e:
         return generate_response(f'Error uploading file: {str(e)}', 500, False)

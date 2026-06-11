@@ -14,7 +14,7 @@ def _generate(client, protocol="tcp", count=1, **opts):
         body["options"] = opts
     r = client.post("/api/pcap/generate", json=body)
     assert r.status_code == 200, r.get_data(as_text=True)
-    fp = r.get_json()["filepath"]
+    fp = r.get_json()["data"]["filepath"]
     return fp.split("/")[-1]  # basename; resolver accepts bare names
 
 
@@ -22,6 +22,18 @@ def test_health(client):
     r = client.get("/api/health")
     assert r.status_code == 200
     assert r.get_json()["status"] == "healthy"
+
+
+def test_envelope_shape_consistent(client):
+    # Previously-flat routes now use the wrapped {success, status_code, data} envelope.
+    r = client.post("/api/pcap/generate", json={"protocol": "tcp", "packet_count": 1})
+    body = r.get_json()
+    assert {"success", "status_code", "data"} <= set(body.keys())
+    assert "filepath" in body["data"]
+    # File listing is wrapped too.
+    rf = client.get("/api/files")
+    assert {"success", "status_code", "data"} <= set(rf.get_json().keys())
+    assert "files" in rf.get_json()["data"]
 
 
 def test_generate_then_list_packets(client):

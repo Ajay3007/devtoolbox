@@ -415,14 +415,14 @@ export default {
 
         if (response.data.success) {
           this.fileInfo = {
-            filename: response.data.file.name,
+            filename: response.data.data.file.name,
             filepath: filepath,
-            packet_count: response.data.packets.length
+            packet_count: response.data.data.packets.length
           }
           this.originalFilepath = filepath
           this.isModified = filepath.startsWith('modified_')
-          this.packets = response.data.packets
-          this.statistics = response.data.statistics
+          this.packets = response.data.data.packets
+          this.statistics = response.data.data.statistics
           this.selectedPacket = null
           this.selectedPacketIndex = null
         } else {
@@ -1191,9 +1191,9 @@ export default {
       try {
         const res = await this.$axios.get(`/pcap/${encodeURIComponent(this.fileInfo.filepath)}`)
         if (res.data.success) {
-          this.packets = res.data.packets
-          this.fileInfo.packet_count = res.data.packets.length
-          this.statistics = res.data.statistics
+          this.packets = res.data.data.packets
+          this.fileInfo.packet_count = res.data.data.packets.length
+          this.statistics = res.data.data.statistics
         }
       } catch (err) {
         this.error = err.message || 'Failed to reload packets'

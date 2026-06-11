@@ -173,7 +173,7 @@ export default {
       try {
         const res = await this.$axios.get('/files');
         if (res.data.success) {
-          this.files = res.data.files;
+          this.files = res.data.data.files;
         } else {
           this.error = 'Failed to load files';
         }
@@ -208,7 +208,7 @@ export default {
           new_name: this.renameValue.trim()
         });
         if (res.data.success) {
-          this.showToast(`Renamed to ${res.data.new_name}`);
+          this.showToast(`Renamed to ${res.data.data.new_name}`);
           this.cancelRename();
           await this.loadFiles();
         } else {
