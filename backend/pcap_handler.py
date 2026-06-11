@@ -6,6 +6,7 @@ Manages reading, writing, and modifying PCAP files using Scapy
 import os
 import shutil
 import logging
+import uuid
 from scapy.all import rdpcap, wrpcap, IP, IPv6, TCP, UDP, ICMP, Raw, Ether, Dot1Q, DNS, DNSQR, DNSRR, ARP
 from collections import defaultdict
 import binascii
@@ -57,23 +58,29 @@ class PCAPHandler(GenerationMixin):
         return packets
 
     def _get_modified_filepath(self, filepath):
-        """Get the path for modified file, creating it if necessary"""
+        """Return the working-copy path for edits, creating it on first use.
+
+        Each fresh original gets its own uniquely-named working copy
+        (``modified_<token>_<name>``) so that two browser tabs/sessions editing
+        the same source file no longer collide on a single shared
+        ``modified_<name>`` file (the previous behaviour, which raced on
+        concurrent edits). Once the caller is already working on a ``modified_``
+        file, that same copy is reused so edits accumulate.
+        """
         filepath = self._resolve(filepath)
         directory = os.path.dirname(filepath)
         filename = os.path.basename(filepath)
-        
-        # Check if this is already a modified file
+
+        # Already a working copy — reuse it so edits accumulate in place.
         if filename.startswith('modified_'):
             return filepath
-        
-        # Create modified filename
-        modified_filename = f'modified_{filename}'
+
+        # New working copy, isolated from other sessions by a short token.
+        token = uuid.uuid4().hex[:8]
+        modified_filename = f'modified_{token}_{filename}'
         modified_filepath = os.path.join(directory, modified_filename)
-        
-        # If modified file doesn't exist, copy the original
         if not os.path.exists(modified_filepath):
             shutil.copy2(filepath, modified_filepath)
-        
         return modified_filepath
 
     def read_pcap(self, filepath):

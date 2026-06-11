@@ -5,6 +5,8 @@ These exercise the public handler API (generate, read, modify, bulk,
 structural ops) so they remain valid across the planned internal refactors
 (TLS-via-Scapy, module split).
 """
+import os
+
 import pytest
 
 from conftest import find_packet_index
@@ -171,3 +173,16 @@ def test_invalid_packet_index_is_rejected(handler):
 def test_read_traversal_is_blocked(handler):
     with pytest.raises(Exception):
         handler.read_pcap("../../../../etc/passwd")
+
+
+def test_working_copies_are_session_isolated(handler):
+    fp = handler.generate_pcap("tcp", 1, None, {})["filepath"]
+    # Two independent first-edits of the same original -> distinct working copies
+    a = handler.modify_ip_addresses(fp, 0, "1.1.1.1", None)["modified_filepath"]
+    b = handler._get_modified_filepath(fp)
+    assert a != b
+    assert os.path.basename(a).startswith("modified_")
+    assert os.path.basename(b).startswith("modified_")
+    # Reusing a working-copy path returns the same file (edits accumulate)
+    again = handler._get_modified_filepath(a)
+    assert os.path.realpath(again) == os.path.realpath(a)
