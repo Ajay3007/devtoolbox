@@ -509,13 +509,15 @@ class PCAPHandler:
             if pos + 2 >= len(payload):
                 return None
             
-            # Extensions length
+            # Extensions length (clamp to the actual payload so a malformed
+            # length can't drive an out-of-bounds read)
             ext_len = int.from_bytes(payload[pos:pos+2], 'big')
             pos += 2
-            
-            # Parse extensions to find SNI
-            ext_end = pos + ext_len
-            while pos + 4 < ext_end:
+
+            # Parse extensions to find SNI. Use <= so an extension whose 4-byte
+            # header ends exactly at ext_end is still examined.
+            ext_end = min(pos + ext_len, len(payload))
+            while pos + 4 <= ext_end:
                 ext_type = int.from_bytes(payload[pos:pos+2], 'big')
                 ext_data_len = int.from_bytes(payload[pos+2:pos+4], 'big')
                 pos += 4
@@ -523,7 +525,7 @@ class PCAPHandler:
                 # SNI extension type is 0x0000
                 if ext_type == 0x0000:
                     # SNI extension found
-                    if pos + 5 < len(payload):
+                    if pos + 5 <= len(payload):
                         # Skip list length (2) + type (1) + name length (2)
                         sni_len = int.from_bytes(payload[pos+3:pos+5], 'big')
                         sni_start = pos + 5
@@ -624,20 +626,23 @@ class PCAPHandler:
             if pos + 2 >= len(payload):
                 return {'success': False, 'error': 'Invalid TLS structure'}
             
-            # Extensions length position
+            # Extensions length position (clamp ext_end to the real payload)
             ext_len_pos = pos
             ext_len = int.from_bytes(payload[pos:pos+2], 'big')
             pos += 2
-            
-            # Parse extensions to find SNI
-            ext_end = pos + ext_len
-            while pos + 4 < ext_end:
+
+            # Parse extensions to find SNI. Use <= so the final extension whose
+            # 4-byte header ends exactly at ext_end is still examined.
+            ext_end = min(pos + ext_len, len(payload))
+            while pos + 4 <= ext_end:
                 ext_type = int.from_bytes(payload[pos:pos+2], 'big')
                 ext_data_len = int.from_bytes(payload[pos+2:pos+4], 'big')
-                
+
                 # SNI extension type is 0x0000
                 if ext_type == 0x0000:
-                    # Found SNI extension
+                    # Found SNI extension (need 9 header bytes before the name)
+                    if pos + 9 > len(payload):
+                        return {'success': False, 'error': 'Truncated SNI extension'}
                     old_sni_len = int.from_bytes(payload[pos+7:pos+9], 'big')
                     new_sni_bytes = new_sni.encode('utf-8')
                     new_sni_len = len(new_sni_bytes)
