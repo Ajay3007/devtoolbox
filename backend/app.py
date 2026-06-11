@@ -17,7 +17,10 @@ try:
 except ImportError:
     ReceiptHandler = None
     _RECEIPT_AVAILABLE = False
-from utils import generate_response, allowed_file, resolve_upload_path
+from utils import (
+    generate_response, allowed_file, resolve_upload_path,
+    validate_network_fields, validate_vlan,
+)
 
 # Configuration
 UPLOAD_FOLDER = 'uploads'
@@ -337,6 +340,11 @@ def modify_ip(filepath, packet_index):
         if not data or (not data.get('src_ip') and not data.get('dst_ip')):
             return generate_response('At least one IP address required', 400, False)
 
+        try:
+            validate_network_fields({'src_ip': data.get('src_ip'), 'dst_ip': data.get('dst_ip')})
+        except ValueError as e:
+            return generate_response(str(e), 400, False)
+
         result = pcap_handler.modify_ip_addresses(
             filepath, packet_index, 
             data.get('src_ip'), 
@@ -362,8 +370,13 @@ def modify_port(filepath, packet_index):
     try:
         data = request.get_json()
         
-        if not data or (not data.get('src_port') and not data.get('dst_port')):
+        if not data or (data.get('src_port') is None and data.get('dst_port') is None):
             return generate_response('At least one port required', 400, False)
+
+        try:
+            validate_network_fields({'src_port': data.get('src_port'), 'dst_port': data.get('dst_port')})
+        except ValueError as e:
+            return generate_response(str(e), 400, False)
 
         result = pcap_handler.modify_ports(
             filepath, packet_index,
@@ -393,6 +406,11 @@ def modify_mac(filepath, packet_index):
         if not data or (not data.get('src_mac') and not data.get('dst_mac')):
             return generate_response('At least one MAC address required', 400, False)
 
+        try:
+            validate_network_fields({'src_mac': data.get('src_mac'), 'dst_mac': data.get('dst_mac')})
+        except ValueError as e:
+            return generate_response(str(e), 400, False)
+
         result = pcap_handler.modify_mac_addresses(
             filepath, packet_index,
             data.get('src_mac'),
@@ -421,7 +439,12 @@ def modify_vlan(filepath, packet_index):
         if not data or 'vlan_id' not in data:
             return generate_response('VLAN ID required', 400, False)
 
-        result = pcap_handler.modify_vlan(filepath, packet_index, data['vlan_id'])
+        try:
+            vlan_id = validate_vlan(data['vlan_id'])
+        except ValueError as e:
+            return generate_response(str(e), 400, False)
+
+        result = pcap_handler.modify_vlan(filepath, packet_index, vlan_id)
 
         if result['success']:
             result['modified_filepath'] = result.get('modified_filepath', '').replace('\\', '/')
@@ -445,10 +468,18 @@ def add_vlan(filepath, packet_index):
         if not data or 'vlan_id' not in data:
             return generate_response('VLAN ID required', 400, False)
 
+        try:
+            vlan_id = validate_vlan(data['vlan_id'])
+            priority = int(data.get('priority', 0))
+            if not (0 <= priority <= 7):
+                raise ValueError(f'VLAN priority out of range (0-7): {priority}')
+        except (ValueError, TypeError) as e:
+            return generate_response(str(e), 400, False)
+
         result = pcap_handler.add_vlan(
             filepath, packet_index,
-            data['vlan_id'],
-            data.get('priority', 0)
+            vlan_id,
+            priority
         )
 
         if result['success']:
@@ -501,6 +532,11 @@ def bulk_modify_packets(filepath):
         packet_indices = data.get('packet_indices', None)  # None = all
         incremental = data.get('incremental', None)
         keep_unselected = data.get('keep_unselected', True)
+
+        try:
+            validate_network_fields(fields)
+        except ValueError as e:
+            return generate_response(str(e), 400, False)
 
         result = pcap_handler.bulk_modify_packets(filepath, packet_indices, fields, incremental, keep_unselected)
         if result['success']:
@@ -646,10 +682,22 @@ def generate_pcap():
         
         if not protocol:
             return generate_response('Protocol is required', 400, False)
-        
+
+        try:
+            packet_count = int(packet_count)
+        except (TypeError, ValueError):
+            return generate_response('packet_count must be an integer', 400, False)
+
         if packet_count < 1 or packet_count > 1000:
             return generate_response('Packet count must be between 1 and 1000', 400, False)
-        
+
+        try:
+            if vlan_id is not None:
+                vlan_id = validate_vlan(vlan_id)
+            validate_network_fields(options)
+        except ValueError as e:
+            return generate_response(str(e), 400, False)
+
         # Generate PCAP
         result = pcap_handler.generate_pcap(protocol, packet_count, vlan_id, options)
         
