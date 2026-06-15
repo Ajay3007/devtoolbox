@@ -112,23 +112,30 @@ class ReceiptHandler:
     # ------------------------------------------------------------------ #
 
     def _preprocess_for_ocr(self, img: Image.Image) -> Image.Image:
-        """Grayscale → contrast boost → adaptive binarisation."""
-        gray = img.convert("L")
-        gray = ImageEnhance.Contrast(gray).enhance(3.0)
-        gray = ImageEnhance.Sharpness(gray).enhance(2.0)
-        arr = np.array(gray, dtype=np.float32)
-        mean_val = arr.mean()
-        thresh = float(min(mean_val * 0.88, 200))
-        binary = gray.point(lambda p: 255 if p > thresh else 0)
-        return binary
+        """Grayscale → CLAHE → Otsu binarisation.
+        CLAHE normalises local contrast so rows with slightly lower ink density
+        (common in thermal/dot-matrix receipts) are not wiped out by a global threshold.
+        """
+        arr = np.array(img.convert("L"))
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        arr = clahe.apply(arr)
+        _, binary = cv2.threshold(arr, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        return Image.fromarray(binary)
 
     def _run_ocr(self, img: Image.Image, lang: str = "eng") -> dict:
         processed = self._preprocess_for_ocr(img)
-        return pytesseract.image_to_data(
-            processed, lang=lang,
-            output_type=pytesseract.Output.DICT,
-            config="--psm 6 --oem 3",
-        )
+        def _ocr(psm):
+            return pytesseract.image_to_data(
+                processed, lang=lang,
+                output_type=pytesseract.Output.DICT,
+                config=f"--psm {psm} --oem 3",
+            )
+        result = _ocr(6)
+        valid = sum(1 for t, c in zip(result["text"], result["conf"])
+                    if (t or "").strip() and int(c) >= 0)
+        if valid < 5:
+            result = _ocr(4)
+        return result
 
     # ------------------------------------------------------------------ #
     #  Field parsing
@@ -161,11 +168,16 @@ class ReceiptHandler:
 
         # Group into visual lines by Y-band (robust across Tesseract block splits).
         # Use vertical centre of each word so tall vs short glyphs land on same band.
-        BAND = 10  # px — words within this many px (centre-to-centre) share a line
+        BAND = 15  # px — words within this many px (centre-to-centre) share a line
         line_map: dict = {}
         for w in words:
             y_key = round((w["top"] + w["height"] / 2) / BAND)
             line_map.setdefault(y_key, []).append(w)
+
+        print("[parse_fields] OCR bands:")
+        for key in sorted(line_map):
+            words_in_band = sorted(line_map[key], key=lambda w: w["left"])
+            print(f"  band {key}: {[w['text'] for w in words_in_band]}")
 
         # Sort lines top-to-bottom
         sorted_lines = sorted(line_map.values(),
@@ -191,11 +203,23 @@ class ReceiptHandler:
                 if any(re.search(p, label_text_so_far) for p, _ in KNOWN_FIELDS):
                     for i, w in enumerate(line):
                         t = w["text"]
+                        # OCR misreads ':' as '-' (e.g. "-Rs.103.76")
                         if (t.startswith('-') and len(t) > 1
                                 and any(c.isalpha() for c in t[1:4])):
                             line = list(line)
                             line[i] = dict(line[i])
                             line[i]["text"] = ':' + t[1:]
+                            colon_idx = i
+                            break
+                        # OCR drops the leading ':' entirely (e.g. "Rs.103.76" or "6.97L")
+                        # Only apply when there's a clear label word before this token.
+                        if (i > 0
+                                and not any(c == ':' for c in t)
+                                and (t[:2].lower() == 'rs' or re.match(r'^\d', t)
+                                     or re.match(r'^[A-Z]{2,}', t))):
+                            line = list(line)
+                            line[i] = dict(line[i])
+                            line[i]["text"] = ':' + t
                             colon_idx = i
                             break
 

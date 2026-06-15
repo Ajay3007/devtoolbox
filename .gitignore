@@ -62,6 +62,7 @@ uploads/
 temp/
 *.pcap
 *.pcapng
+*.log
 
 # Test tooling / artifacts
 .testdeps/
