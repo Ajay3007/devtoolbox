@@ -2,6 +2,7 @@
   <div class="pdf-page" @dragover.prevent @drop.prevent="onDrop">
     <!-- Hidden inputs -->
     <input type="file" ref="fileInput" @change="onFileSelect" accept=".pdf" style="display: none" />
+    <input type="file" ref="appendInput" @change="onAppendFileSelect" accept=".pdf" style="display: none" />
     
     <ViewHeader
       :icon="IconPDF"
@@ -55,6 +56,9 @@
             <div style="display: flex; flex-direction: column; gap: 8px">
               <button @click="showMetadata = true" class="btn btn-ghost" style="justify-content: flex-start"><IconFiles :size="13"/> Edit Metadata</button>
               <button @click="showWatermark = true" class="btn btn-ghost" style="justify-content: flex-start"><IconHex :size="13"/> Add Watermark</button>
+              <button @click="$refs.appendInput.click()" class="btn btn-ghost" style="justify-content: flex-start" :disabled="appending">
+                <IconFiles :size="13"/> {{ appending ? 'Appending…' : 'Append PDF' }}
+              </button>
               <button @click="toggleDeletePage(currentPage)" class="btn btn-ghost" style="justify-content: flex-start; color: var(--accent-4)" :class="{ 'active': isDeleted(currentPage) }">
                 <IconX :size="13"/> {{ isDeleted(currentPage) ? 'Restore Page' : 'Delete Page' }}
               </button>
@@ -527,11 +531,8 @@ export default {
       this.saving = true;
       this.saveResult = null;
       
-      // Convert hex to rgb
-      const hex = this.watermarkConfig.hexColor.replace('#', '');
-      const r = parseInt(hex.substring(0, 2), 16) / 255;
-      const g = parseInt(hex.substring(2, 4), 16) / 255;
-      const b = parseInt(hex.substring(4, 6), 16) / 255;
+      // Convert hex to rgb (tolerate #abc, #aabbcc, with/without '#'; fall back to grey)
+      const [r, g, b] = this.hexToRgb(this.watermarkConfig.hexColor);
 
       const payloadWatermark = hasWatermark ? {
         text: this.watermarkConfig.text,
@@ -594,6 +595,17 @@ export default {
         `${this.$axios.defaults.baseURL}/pdf/download/${this.saveResult.filename}`,
         '_blank'
       );
+    },
+
+    // Parse a hex colour into a normalized [r,g,b] (0-1). Accepts "#rgb",
+    // "#rrggbb", or the same without the leading '#'. Returns mid-grey on
+    // anything malformed so a typo never produces NaN colours server-side.
+    hexToRgb(input) {
+      const FALLBACK = [0.75, 0.75, 0.75];
+      let h = String(input || '').trim().replace(/^#/, '');
+      if (h.length === 3) h = h.split('').map(c => c + c).join('');
+      if (!/^[0-9a-fA-F]{6}$/.test(h)) return FALLBACK;
+      return [0, 2, 4].map(i => parseInt(h.substr(i, 2), 16) / 255);
     },
 
     truncate(s, n = 28) {

@@ -1102,4 +1102,6 @@ def receipt_download(filename):
 if __name__ == '__main__':
     # app.run(debug=True, host='0.0.0.0', port=5000)
     debug_mode = os.environ.get('FLASK_DEBUG', 'False').lower() in ('true', '1', 't')
-    app.run(debug=debug_mode, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+    # Default to 5001: on macOS port 5000 is occupied by the AirPlay Receiver
+    # (Control Center), which returns 403 for every request. Override with PORT.
+    app.run(debug=debug_mode, host='0.0.0.0', port=int(os.environ.get('PORT', 5001)))

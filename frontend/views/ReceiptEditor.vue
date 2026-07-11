@@ -165,8 +165,7 @@
              :style="{ width: receipt.preview_width + 'px', maxWidth: '100%' }"
              ref="imageWrapper">
           <img :src="'data:image/jpeg;base64,' + receipt.image_b64"
-               class="receipt-img" ref="receiptImg"
-               @load="onImgLoad" />
+               class="receipt-img" />
 
           <!-- OCR span overlays (percentage-positioned) -->
           <div v-for="(span, i) in receipt.all_spans" :key="i"
@@ -296,7 +295,6 @@ export default {
       generateError: null,
       result:        null,
       showPreview:   false,
-      imgDisplayW:   0,
       showAppearance: false,
       appearance: {
         opacityPct:  85,   // 10–100
@@ -309,7 +307,10 @@ export default {
   computed: {
     knownFields() {
       if (!this.receipt) return []
-      return this.receipt.fields.filter(f => f.value_bbox && f.field_type)
+      // Show every parsed label:value pair that has an editable value box —
+      // not just the ones whose label matched the HP-specific KNOWN_FIELDS
+      // list. Unknown-type fields fall back to their raw OCR label for display.
+      return this.receipt.fields.filter(f => f.value_bbox)
     },
     allEdits() {
       const edits = []
@@ -363,7 +364,7 @@ export default {
           this.uploadError = res.data.data?.message || res.data.message || 'Upload failed'
         }
       } catch (err) {
-        this.uploadError = err.response?.data?.message || err.message || 'Upload failed'
+        this.uploadError = err.response?.data?.data?.message || err.response?.data?.message || err.message || 'Upload failed'
       } finally {
         this.uploading = false
       }
@@ -496,11 +497,6 @@ export default {
       }
     },
 
-    onImgLoad() {
-      if (this.$refs.receiptImg)
-        this.imgDisplayW = this.$refs.receiptImg.clientWidth
-    },
-
     // ── Generate ─────────────────────────────────────────────────────────
     async generate() {
       if (this.editCount === 0) return
@@ -512,9 +508,12 @@ export default {
           edits:         this.allEdits,
           output_format: 'pdf',
           appearance: {
-            opacity:    this.appearance.opacityPct / 100,
-            blur:       this.appearance.blurTenths  / 10,
-            brightness: this.appearance.brightness,
+            opacity:     this.appearance.opacityPct / 100,
+            blur:        this.appearance.blurTenths  / 10,
+            brightness:  this.appearance.brightness,
+            // Receipt's single printed text height, detected at scan time. Lets
+            // the backend render every edit at a uniform size matching the print.
+            text_height: this.receipt.text_height,
           },
         })
         if (res.data.success) {
@@ -524,7 +523,7 @@ export default {
           this.generateError = res.data.data?.message || res.data.message || 'Generation failed'
         }
       } catch (err) {
-        this.generateError = err.response?.data?.message || err.message || 'Generation failed'
+        this.generateError = err.response?.data?.data?.message || err.response?.data?.message || err.message || 'Generation failed'
       } finally {
         this.generating = false
       }

@@ -113,9 +113,21 @@ class ReceiptHandler:
 
     def _preprocess_for_ocr(self, img: Image.Image) -> Image.Image:
         """Grayscale → CLAHE → Otsu binarisation.
-        CLAHE normalises local contrast so rows with slightly lower ink density
-        (common in thermal/dot-matrix receipts) are not wiped out by a global threshold.
+
+        CLAHE equalises contrast *locally*, so faint rows that sit under a
+        faded stamp or watermark (e.g. the "Rate" line on HP fuel receipts)
+        survive binarisation. A global contrast+threshold pass — which this
+        replaced — wiped those rows out entirely, dropping them from OCR.
         """
+        if not _CV2_AVAILABLE:
+            # Fallback when OpenCV is unavailable: contrast boost + global threshold.
+            gray = img.convert("L")
+            gray = ImageEnhance.Contrast(gray).enhance(3.0)
+            gray = ImageEnhance.Sharpness(gray).enhance(2.0)
+            arr = np.array(gray, dtype=np.float32)
+            thresh = float(min(arr.mean() * 0.88, 200))
+            return gray.point(lambda p: 255 if p > thresh else 0)
+
         arr = np.array(img.convert("L"))
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         arr = clahe.apply(arr)
@@ -124,18 +136,11 @@ class ReceiptHandler:
 
     def _run_ocr(self, img: Image.Image, lang: str = "eng") -> dict:
         processed = self._preprocess_for_ocr(img)
-        def _ocr(psm):
-            return pytesseract.image_to_data(
-                processed, lang=lang,
-                output_type=pytesseract.Output.DICT,
-                config=f"--psm {psm} --oem 3",
-            )
-        result = _ocr(6)
-        valid = sum(1 for t, c in zip(result["text"], result["conf"])
-                    if (t or "").strip() and int(c) >= 0)
-        if valid < 5:
-            result = _ocr(4)
-        return result
+        return pytesseract.image_to_data(
+            processed, lang=lang,
+            output_type=pytesseract.Output.DICT,
+            config="--psm 6 --oem 3",
+        )
 
     # ------------------------------------------------------------------ #
     #  Field parsing
@@ -166,24 +171,29 @@ class ReceiptHandler:
                 "height": ocr["height"][i],
             })
 
-        # Group into visual lines by Y-band (robust across Tesseract block splits).
-        # Use vertical centre of each word so tall vs short glyphs land on same band.
-        BAND = 15  # px — words within this many px (centre-to-centre) share a line
-        line_map: dict = {}
-        for w in words:
-            y_key = round((w["top"] + w["height"] / 2) / BAND)
-            line_map.setdefault(y_key, []).append(w)
-
-        print("[parse_fields] OCR bands:")
-        for key in sorted(line_map):
-            words_in_band = sorted(line_map[key], key=lambda w: w["left"])
-            print(f"  band {key}: {[w['text'] for w in words_in_band]}")
-
-        # Sort lines top-to-bottom
-        sorted_lines = sorted(line_map.values(),
-                              key=lambda ws: min(w["top"] for w in ws))
+        # Group words into visual lines by vertical centre. A fixed pixel "band"
+        # splits a row whenever the label and value glyphs have slightly different
+        # centres and straddle a band boundary (e.g. "Rate" vs ">-Rs.103.76", which
+        # land 10px apart) — orphaning the value. Instead, cluster greedily with a
+        # gap threshold derived from the median glyph height, so it tolerates
+        # within-row baseline jitter and auto-scales to the scan's resolution.
+        med_h = sorted(w["height"] for w in words)[len(words) // 2] if words else 20
+        gap = max(8, int(med_h * 0.7))
+        sorted_lines = []
+        cur, cur_center = [], None
+        for w in sorted(words, key=lambda w: w["top"] + w["height"] / 2):
+            c = w["top"] + w["height"] / 2
+            if cur and abs(c - cur_center) > gap:
+                sorted_lines.append(cur)
+                cur = []
+            cur.append(w)
+            cur_center = sum(x["top"] + x["height"] / 2 for x in cur) / len(cur)
+        if cur:
+            sorted_lines.append(cur)
+        sorted_lines.sort(key=lambda ws: min(w["top"] for w in ws))
 
         fields = []
+        pending = []   # label-bearing lines with no detectable colon (rescued below)
         for line in sorted_lines:
             line = sorted(line, key=lambda w: w["left"])
 
@@ -203,7 +213,6 @@ class ReceiptHandler:
                 if any(re.search(p, label_text_so_far) for p, _ in KNOWN_FIELDS):
                     for i, w in enumerate(line):
                         t = w["text"]
-                        # OCR misreads ':' as '-' (e.g. "-Rs.103.76")
                         if (t.startswith('-') and len(t) > 1
                                 and any(c.isalpha() for c in t[1:4])):
                             line = list(line)
@@ -211,107 +220,164 @@ class ReceiptHandler:
                             line[i]["text"] = ':' + t[1:]
                             colon_idx = i
                             break
-                        # OCR drops the leading ':' entirely (e.g. "Rs.103.76" or "6.97L")
-                        # Only apply when there's a clear label word before this token.
-                        if (i > 0
-                                and not any(c == ':' for c in t)
-                                and (t[:2].lower() == 'rs' or re.match(r'^\d', t)
-                                     or re.match(r'^[A-Z]{2,}', t))):
-                            line = list(line)
-                            line[i] = dict(line[i])
-                            line[i]["text"] = ':' + t
-                            colon_idx = i
-                            break
 
             if colon_idx is None:
+                # Defer to the colon-column rescue pass below: the colon may have
+                # been misread as junk (e.g. "Rate" + ">-Rs.103.76"), so the value
+                # is unrecoverable until we know where the value column sits.
+                label_join = " ".join(w["text"] for w in line).lower()
+                if any(re.search(p, label_join) for p, _ in KNOWN_FIELDS):
+                    pending.append(line)
                 continue
 
-            cw       = line[colon_idx]
-            cw_text  = cw["text"]
-            colon_pos_in_word = cw_text.index(":")
-            before_colon = cw_text[:colon_pos_in_word]   # e.g. "No" or ""
-            after_colon  = cw_text[colon_pos_in_word + 1:]  # e.g. "Apr-882977" or "29/04/2026"
+            field = self._field_from_colon_line(line, colon_idx)
+            if field:
+                fields.append(field)
 
-            # Build label text
-            label_parts = [w["text"] for w in line[:colon_idx]]
-            if before_colon:
-                label_parts.append(before_colon)
-            label_text = " ".join(label_parts).strip()
-            if not label_text:
-                continue
+        # ── Consensus colon column ──────────────────────────────────────────
+        # Every value_bbox[0] is the actual ':' pixel position, so they cluster
+        # tightly. Take the median of the densest 20px cluster (ignores indented
+        # sub-fields / outliers). This column also drives the rescue pass.
+        colon_col = self._consensus_colon_col(fields)
 
-            # Build value text — always prefixed with ':' so the span is colon-inclusive
-            value_words = line[colon_idx + 1:]  # separate words after colon word
-            value_parts = []
-            if after_colon:
-                value_parts.append(after_colon)
-            value_parts += [w["text"] for w in value_words]
-            value_text = ":" + " ".join(value_parts).strip()
+        # ── Rescue pass ─────────────────────────────────────────────────────
+        # For label lines whose colon OCR'd as junk, split label vs. value at the
+        # colon column and synthesize the field (strips leading junk like ">-").
+        if colon_col is not None:
+            for line in pending:
+                field = self._field_from_column(line, colon_col)
+                if field:
+                    fields.append(field)
+            # Recompute now that rescued fields contribute their own colon x0.
+            colon_col = self._consensus_colon_col(fields) or colon_col
 
-            # ── Value bbox: starts exactly at the ':' character ─────────────
-            if value_words:
-                # Case D: standalone colon word — x0 at the ':' token's left.
-                x0 = cw["left"]
-                y0 = cw["top"]
-                x1 = max(w["left"] + w["width"]  for w in value_words)
-                y1 = max(w["top"]  + w["height"] for w in value_words)
-                value_bbox = [x0, y0, x1, y1]
-
-            elif after_colon:
-                # Cases A/B/C: colon is embedded in the word.
-                char_w = cw["width"] / max(len(cw_text), 1)
-                # Start exactly at the ':' character regardless of whether
-                # there's label text before it or not.
-                x0 = int(cw["left"] + char_w * colon_pos_in_word)
-                y0 = cw["top"]
-                x1 = cw["left"] + cw["width"]
-                y1 = cw["top"] + cw["height"]
-                value_bbox = [x0, y0, x1, y1]
-
-            else:
-                # Lone colon at end of word with no value found
-                value_bbox = None
-
-            # Use 33rd-percentile height (not median) so that a 2-word line
-            # (e.g. "Time" + ":16:51:06") doesn't return the larger inflated value.
-            heights = sorted(w["height"] for w in line)
-            line_height = heights[max(0, len(heights) // 3)] if heights else 20
-
-            # Match label to a known field type
-            field_type = None
-            for pattern, name in KNOWN_FIELDS:
-                if re.search(pattern, label_text.lower()):
-                    field_type = name
-                    break
-
-            fields.append({
-                "label":       label_text,
-                "field_type":  field_type,
-                "value":       value_text,
-                "value_bbox":  value_bbox,
-                "line_height": line_height,
-            })
-
-        # Normalize value_bbox x0 to the consensus colon-column.
-        # All value_bbox[0] values now represent the actual ':' pixel position,
-        # so they should cluster tightly.  Use the median of the tightest cluster
-        # (within 20px of each other) to avoid outliers (e.g. indented sub-fields).
-        x0_list = [f["value_bbox"][0] for f in fields if f["value_bbox"]]
-        if len(x0_list) >= 3:
-            x0_list_s = sorted(x0_list)
-            # Find the densest cluster: largest group of values within a 20px window
-            best_start, best_count = 0, 0
-            for i, v in enumerate(x0_list_s):
-                count = sum(1 for u in x0_list_s if abs(u - v) <= 20)
-                if count > best_count:
-                    best_count, best_start = count, v
-            cluster = [v for v in x0_list_s if abs(v - best_start) <= 20]
-            colon_col = cluster[len(cluster) // 2]  # median of cluster
+        # Snap each value_bbox x0 to the consensus column for clean alignment.
+        if colon_col is not None:
             for f in fields:
                 if f["value_bbox"] and abs(f["value_bbox"][0] - colon_col) < 50:
                     f["value_bbox"][0] = colon_col
 
         return fields
+
+    @staticmethod
+    def _strip_lead_junk(s: str) -> str:
+        """Drop a leading run of non-alphanumeric OCR noise (e.g. '>-', '“-', '*')."""
+        return re.sub(r'^[^0-9A-Za-z]+', '', s)
+
+    @staticmethod
+    def _consensus_colon_col(fields: list):
+        """Median x0 of the densest 20px cluster of value-bbox left edges, or None."""
+        x0_list = sorted(f["value_bbox"][0] for f in fields if f["value_bbox"])
+        if len(x0_list) < 3:
+            return x0_list[len(x0_list) // 2] if x0_list else None
+        best_start, best_count = 0, 0
+        for v in x0_list:
+            count = sum(1 for u in x0_list if abs(u - v) <= 20)
+            if count > best_count:
+                best_count, best_start = count, v
+        cluster = [v for v in x0_list if abs(v - best_start) <= 20]
+        return cluster[len(cluster) // 2]
+
+    def _field_from_colon_line(self, line: list, colon_idx: int):
+        """Build a field dict from a line where the colon was detected."""
+        cw       = line[colon_idx]
+        cw_text  = cw["text"]
+        colon_pos_in_word = cw_text.index(":")
+        before_colon = cw_text[:colon_pos_in_word]    # e.g. "No" or ""
+        after_colon  = cw_text[colon_pos_in_word + 1:]  # e.g. "Apr-882977"
+
+        label_parts = [w["text"] for w in line[:colon_idx]]
+        if before_colon:
+            label_parts.append(before_colon)
+        label_text = " ".join(label_parts).strip()
+        if not label_text:
+            return None
+
+        # Value text — always prefixed with ':' so the span is colon-inclusive
+        value_words = line[colon_idx + 1:]
+        value_parts = []
+        if after_colon:
+            value_parts.append(after_colon)
+        value_parts += [w["text"] for w in value_words]
+        value_text = ":" + " ".join(value_parts).strip()
+
+        # ── Value bbox: starts exactly at the ':' character ─────────────
+        if value_words:
+            # Case D: standalone colon word — x0 at the ':' token's left.
+            x0 = cw["left"]
+            y0 = cw["top"]
+            x1 = max(w["left"] + w["width"]  for w in value_words)
+            y1 = max(w["top"]  + w["height"] for w in value_words)
+            value_bbox = [x0, y0, x1, y1]
+        elif after_colon:
+            # Cases A/B/C: colon is embedded in the word.
+            char_w = cw["width"] / max(len(cw_text), 1)
+            x0 = int(cw["left"] + char_w * colon_pos_in_word)
+            y0 = cw["top"]
+            x1 = cw["left"] + cw["width"]
+            y1 = cw["top"] + cw["height"]
+            value_bbox = [x0, y0, x1, y1]
+        else:
+            # Lone colon at end of word with no value found
+            value_bbox = None
+
+        return self._make_field(label_text, value_text, value_bbox, line)
+
+    def _field_from_column(self, line: list, colon_col: int):
+        """Rescue a field by splitting at the consensus colon column.
+
+        Used when the ':' was OCR'd as junk. Words at/after the column form the
+        value (leading junk stripped); words before it form the label.
+        """
+        TOL = 40
+        value_words = [w for w in line if w["left"] >= colon_col - TOL]
+        label_words = [w for w in line if w["left"] <  colon_col - TOL]
+        if not value_words or not label_words:
+            return None
+
+        # Drop trailing pure-punctuation noise words (stray '.', '°', '"' left by a
+        # faded stamp) so the value box doesn't stretch across empty paper — which
+        # would over-erase on inpaint. Keep them if they're all we have.
+        while len(value_words) > 1 and not any(c.isalnum() for c in value_words[-1]["text"]):
+            value_words.pop()
+
+        label_text = " ".join(w["text"] for w in label_words).strip()
+        if not label_text:
+            return None
+
+        raw_value = " ".join(w["text"] for w in value_words).strip()
+        clean_value = self._strip_lead_junk(raw_value)
+        if not clean_value:
+            return None
+        value_text = ":" + clean_value
+
+        x0 = colon_col
+        y0 = min(w["top"] for w in value_words)
+        x1 = max(w["left"] + w["width"]  for w in value_words)
+        y1 = max(w["top"]  + w["height"] for w in value_words)
+        return self._make_field(label_text, value_text, [x0, y0, x1, y1], line)
+
+    def _make_field(self, label_text: str, value_text: str,
+                    value_bbox, line: list) -> dict:
+        """Assemble a field dict, matching the label to a known field type."""
+        # 33rd-percentile height (not median) so a 2-word line (e.g. "Time" +
+        # ":16:51:06") doesn't return the larger inflated value.
+        heights = sorted(w["height"] for w in line)
+        line_height = heights[max(0, len(heights) // 3)] if heights else 20
+
+        field_type = None
+        for pattern, name in KNOWN_FIELDS:
+            if re.search(pattern, label_text.lower()):
+                field_type = name
+                break
+
+        return {
+            "label":       label_text,
+            "field_type":  field_type,
+            "value":       value_text,
+            "value_bbox":  value_bbox,
+            "line_height": line_height,
+        }
 
     def _all_spans(self, ocr: dict) -> list:
         spans = []
@@ -519,9 +585,21 @@ class ReceiptHandler:
         x0, y0, x1, y1 = [int(v) for v in bbox]
         bbox_h = max(y1 - y0, 1)
         size_pct = float(appearance.get("size_pct", 100)) if appearance else 100.0
-        base_h   = min(bbox_h, line_height) if line_height > 0 else bbox_h
-        target_h = max(4, int(base_h * size_pct / 100.0))
-        font_size = self._match_font_size(text, int(target_h * 0.90))
+        global_h = float(appearance.get("text_height", 0)) if appearance else 0.0
+
+        if global_h > 0:
+            # Receipt prints one uniform size: size every edit from the global
+            # text height, and match the font against a fixed digit reference so
+            # sizing is identical regardless of the edit's own glyphs (caps,
+            # descenders, slashes). This is what keeps Rate/Date/Bill No the same
+            # size as the surrounding print instead of shrinking to their box.
+            target_h = max(4, int(global_h * size_pct / 100.0))
+            font_size = self._match_font_size("0123456789", target_h)
+        else:
+            # Legacy path (no global height available): guess from this field's box.
+            base_h   = min(bbox_h, line_height) if line_height > 0 else bbox_h
+            target_h = max(4, int(base_h * size_pct / 100.0))
+            font_size = self._match_font_size(text, int(target_h * 0.90))
         font = self._get_font(font_size)
 
         ink_color  = appearance["ink_color"]  if appearance else (20, 20, 20)
@@ -655,6 +733,19 @@ class ReceiptHandler:
                     s["bbox"][3] = s["bbox"][1] + ref_h
                     s["height"]  = ref_h
 
+        # Global text height — the single printed font height of the receipt.
+        # Thermal/dot-matrix receipts print every line at one size, so the median
+        # of high-confidence word-box heights is a far more reliable size target
+        # than any individual field's (noisy) OCR box. Used to render ALL edits at
+        # a consistent size instead of per-field guesses. See _render_text.
+        hc = sorted(s["height"] for s in all_spans if s["conf"] >= 40)
+        if len(hc) >= 3:
+            text_height = hc[len(hc) // 2]                 # median
+        elif all_spans:
+            text_height = sorted(s["height"] for s in all_spans)[len(all_spans) // 2]
+        else:
+            text_height = 0
+
         # Build preview (cap longest dimension at 1400px)
         preview_img = img.copy()
         max_dim = 1400
@@ -678,6 +769,7 @@ class ReceiptHandler:
             "preview_height":preview_img.height,
             "fields":        fields,
             "all_spans":     all_spans,
+            "text_height":   text_height,
             "lang":          lang,
             "font_available": _FONT_PATH is not None,
         }
@@ -691,9 +783,13 @@ class ReceiptHandler:
         edits: [{ bbox:[x0,y0,x1,y1], new_text:str, line_height:float }, ...]
 
         appearance_settings (all optional, user-supplied overrides):
-          opacity    : float 0.0–1.0  — text visibility (default: 0.85)
-          blur       : float 0.0–3.0  — stroke softness; 0 = crisp (default: auto)
-          brightness : int  -50–+50   — ink lightness offset (default: 0)
+          opacity     : float 0.0–1.0  — text visibility (default: 0.85)
+          blur        : float 0.0–3.0  — stroke softness; 0 = crisp (default: auto)
+          brightness  : int  -50–+50   — ink lightness offset (default: 0)
+          text_height : int            — receipt's global printed text height in px.
+                        When provided, every edit renders at this single size
+                        (× per-edit size_pct) instead of guessing from each
+                        field's noisy OCR box. See upload_and_scan / _render_text.
         """
         path = os.path.join(self.upload_folder, os.path.basename(filepath))
         if not os.path.exists(path):
@@ -718,6 +814,8 @@ class ReceiptHandler:
                 int(np.clip(c + offset, 0, 255))
                 for c in appearance["ink_color"]
             )
+        if s.get("text_height"):
+            appearance["text_height"] = int(s["text_height"])
 
         for edit in edits:
             bbox      = edit["bbox"]
